@@ -1,0 +1,13 @@
+
+> identity-service@0.0.1 test C:\Users\Surface\Documents\Projects\SynapGrid\backend\apps\identity-service
+> jest
+
+No tests found, exiting with code 1
+Run with `--passWithNoTests` to exit with code 0
+In C:\Users\Surface\Documents\Projects\SynapGrid\backend\apps\identity-service\src
+  4 files checked.
+  testMatch:  - 0 matches
+  testPathIgnorePatterns: \\node_modules\\ - 4 matches
+  testRegex: .*\.spec\.ts$ - 0 matches
+Pattern:  - 0 matches
+ ELIFECYCLE  Test failed. See above for more details.

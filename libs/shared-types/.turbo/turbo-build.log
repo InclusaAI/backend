@@ -1,0 +1,4 @@
+
+> @inclusaai/shared-types@0.0.1 build C:\Users\Surface\Documents\Projects\SynapGrid\backend\libs\shared-types
+> tsc -p tsconfig.json
+
