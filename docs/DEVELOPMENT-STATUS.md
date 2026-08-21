@@ -28,6 +28,10 @@ Last Updated: 2026-08-18
     - Created `Dockerfile` for each service.
     - Configured CI workflows.
     - Updated `README.md`.
+
+### Issue #2: Identity and Organization Membership
+
+- **Status:** DONE
 ### Issue #6: Shared Package Integration
 
 - **Status:** COMPLETED
