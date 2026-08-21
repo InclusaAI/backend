@@ -32,6 +32,19 @@ Last Updated: 2026-08-18
 ### Issue #2: Identity and Organization Membership
 
 - **Status:** DONE
+
+### Issue #3: Presentation and Session CRUD
+
+- **Status:** DONE
+- **Summary:** Implemented presentation and session management, including creation, starting, and ending sessions. Added Kafka events for session lifecycle and OpenAPI documentation for all new endpoints.
+- **API Documentation:**
+    - `/presentations`
+    - `/presentations/{id}/sessions`
+    - `/sessions/{id}`
+- **Kafka Events:**
+    - `session.created`
+    - `session.updated`
+    - `session.ended`
 ### Issue #6: Shared Package Integration
 
 - **Status:** COMPLETED

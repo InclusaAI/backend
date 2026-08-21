@@ -18,6 +18,5 @@ export function setupSwagger(app: INestApplication): void {
   // Endpoint for the interactive Scalar UI
   SwaggerModule.setup('/api/docs', app, document, {
     customSiteTitle: 'Session Service API Docs',
-    scalarOptions: {},
   });
 }

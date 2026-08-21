@@ -1,0 +1,61 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CommunicationMode {
+  SPEECH
+  SIGN_LANGUAGE
+  HYBRID
+}
+
+model Presentation {
+  id             String   @id @default(cuid())
+  name           String
+  slideMetadata  Json     // To store metadata about slides, e.g., URLs, order
+  organizationId String   // Belongs to an organization from the identity service
+  ownerId        String   // Belongs to a user from the identity service
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  sessions Session[]
+
+  @@map("presentations")
+}
+
+model Session {
+  id              String            @id @default(cuid())
+  presentationId  String
+  communicationMode CommunicationMode
+  joinCode        String?           @unique // Short, user-friendly code to join
+  qrPayload       String?           // Payload for generating a QR code
+  status          String            @default("PENDING") // PENDING, ACTIVE, ENDED
+  createdAt       DateTime          @default(now())
+  startedAt       DateTime?
+  endedAt         DateTime?
+  updatedAt       DateTime          @updatedAt
+
+  presentation    Presentation      @relation(fields: [presentationId], references: [id])
+  joinTokens      JoinToken[]
+
+  @@map("sessions")
+}
+
+model JoinToken {
+  id        String   @id @default(cuid())
+  sessionId String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  session   Session  @relation(fields: [sessionId], references: [id])
+
+  @@map("join_tokens")
+}

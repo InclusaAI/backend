@@ -2,12 +2,3 @@
 > session-service@0.0.1 build C:\Users\Surface\Documents\Projects\SynapGrid\backend\apps\session-service
 > nest build
 
-[96msrc/swagger.ts[0m:[93m21[0m:[93m5[0m - [91merror[0m[90m TS2345: [0mArgument of type '{ customSiteTitle: string; scalarOptions: {}; }' is not assignable to parameter of type 'SwaggerCustomOptions'.
-  Object literal may only specify known properties, and 'scalarOptions' does not exist in type 'SwaggerCustomOptions'.
-Found 1 error(s).
-
-
-[7m21[0m     scalarOptions: {},
-[7m  [0m [91m    ~~~~~~~~~~~~~[0m
-
- ELIFECYCLE  Command failed with exit code 1.
