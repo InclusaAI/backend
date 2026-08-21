@@ -1,0 +1,4 @@
+
+> preference-service@0.0.1 lint C:\Users\Surface\Documents\Projects\SynapGrid\backend\apps\preference-service
+> eslint "{src,apps,libs,test}/**/*.ts" --fix
+

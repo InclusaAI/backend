@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "../../dist/apps/presenter-assist-service",
+    "baseUrl": "./",
+    "paths": {}
+  },
+  "exclude": ["node_modules", "dist", "test", "**/*spec.ts"]
+}

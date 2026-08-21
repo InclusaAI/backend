@@ -1,0 +1,4 @@
+
+> @inclusaai/shared-auth@0.0.1 build C:\Users\Surface\Documents\Projects\SynapGrid\backend\libs\shared-auth
+> tsc -p tsconfig.json
+

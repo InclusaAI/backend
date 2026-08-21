@@ -1,0 +1,4 @@
+
+> fanout-service@0.0.1 lint C:\Users\Surface\Documents\Projects\SynapGrid\backend\apps\fanout-service
+> eslint "{src,apps,libs,test}/**/*.ts" --fix
+

@@ -1,0 +1,15 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  validate:
+    uses: inclusaai-infra/reusable-workflows/.github/workflows/node-ci.yml@main
+    with:
+      # Assuming the reusable workflow accepts a parameter for which apps to build/test.
+      # This might need adjustment based on the actual reusable workflow's inputs.
+      apps: 'identity-service,session-service,preference-service,fanout-service,presenter-assist-service'

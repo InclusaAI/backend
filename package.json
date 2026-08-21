@@ -1,0 +1,20 @@
+{
+  "name": "inclusaai-backend",
+  "private": true,
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint",
+    "test": "turbo test",
+    "clean": "turbo clean",
+    "format": "prettier --write \"**/*.{ts,js,json,md}\""
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.0.0",
+    "@typescript-eslint/eslint-plugin": "5.59.11",
+    "@typescript-eslint/parser": "5.59.11",
+    "prettier": "^3.0.0",
+    "turbo": "^1.10.0"
+  },
+  "packageManager": "pnpm@8.6.0"
+}
