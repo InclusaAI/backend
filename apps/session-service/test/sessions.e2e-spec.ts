@@ -65,6 +65,7 @@ describe('Sessions', () => {
       const session = await prisma.session.create({
         data: {
           presentationId: presentation.id,
+          userId,
           communicationMode: CommunicationMode.HYBRID,
           status: 'ACTIVE',
         },

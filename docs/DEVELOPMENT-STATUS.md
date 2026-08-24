@@ -17,39 +17,52 @@ Last Updated: 2026-08-18
 
 ## Detailed Status
 
-### Issue #1: Repository Scaffolding
-
-- **Status:** COMPLETED (with exceptions)
-- **Completed Work:**
-    - Initialized pnpm workspace and Turborepo.
-    - Scaffolded five NestJS applications.
-    - Created `libs/internal-shared`.
-    - Created `docker-compose.dev.yml` for Postgres, Redis, and Kafka.
-    - Created `Dockerfile` for each service.
-    - Configured CI workflows.
-    - Updated `README.md`.
-
-### Issue #2: Identity and Organization Membership
-
-- **Status:** DONE
-
-### Issue #3: Presentation and Session CRUD
-
-- **Status:** DONE
-- **Summary:** Implemented presentation and session management, including creation, starting, and ending sessions. Added Kafka events for session lifecycle and OpenAPI documentation for all new endpoints.
-- **API Documentation:**
-    - `/presentations`
-    - `/presentations/{id}/sessions`
-    - `/sessions/{id}`
-- **Kafka Events:**
-    - `session.created`
-    - `session.updated`
-    - `session.ended`
-### Issue #6: Shared Package Integration
-
-- **Status:** COMPLETED
-- **Tests:** TBD
-- **API Changes:** TBD
+- **Issue #4: Participant Accessibility Preferences**
+  - **Status:** DONE
+  - **Description:** Implemented participant-scoped accessibility preferences (captions, avatar).
+  - **Services:** `identity-service`
+  - **Details:**
+    - Added `AccessibilityPreference` model to the database.
+    - Created `GET /preferences` and `PATCH /preferences` endpoints.
+    - Integrated Kafka to publish `accessibility.preference.updated` events.
+    - Added e2e tests for the new endpoints.
+    - Updated OpenAPI documentation.
+- **Issue #3: Presentation and Session CRUD**
+  - **Status:** DONE
+  - **Description:** Implemented presentation and session CRUD/join mechanisms.
+  - **Services:** `session-service`
+  - **Details:**
+    - Created `Presentation`, `Session`, and `JoinToken` models.
+    - Implemented endpoints for creating presentations and managing sessions.
+    - Added Kafka event publishing for session lifecycle events.
+    - Documented all new endpoints in OpenAPI.
+- **Issue #2: Identity and Organization Membership**
+  - **Status:** DONE
+  - **Description:** Implemented the core identity and organization membership system.
+  - **Services:** `identity-service`
+  - **Details:**
+    - Created `User`, `Organization`, `OrgMembership`, and `Invitation` models.
+    - Implemented user signup, login, and JWT-based authentication.
+    - Added organization and invitation management endpoints.
+    - Integrated Kafka for publishing invitation events.
+- **Issue #1: Initial Service Scaffolding**
+  - **Status:** DONE
+  - **Description:** Set up the initial monorepo structure and scaffolded the primary microservices.
+  - **Services:** `api-gateway`, `identity-service`, `session-service`, `notification-service`, `ai-service`
+  - **Details:**
+    - Initialized a NestJS monorepo with Turborepo.
+    - Created five initial services.
+    - Configured basic CI workflows.
+- **Issue #5: Real-time Transcription and Translation**
+  - **Status:** PENDING
+- **Issue #6: Shared Packages and Libraries**
+  - **Status:** DONE
+  - **Description:** Created shared packages for Kafka contracts, authentication, and types.
+  - **Services:** N/A (shared libraries)
+  - **Details:**
+    - `@inclusaai/kafka-contracts`
+    - `@inclusaai/shared-auth`
+    - `@inclusaai/shared-types`
 
 ---
 

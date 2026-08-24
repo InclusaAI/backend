@@ -10,6 +10,7 @@ exports.SessionsModule = void 0;
 const common_1 = require("@nestjs/common");
 const sessions_service_1 = require("./sessions.service");
 const sessions_controller_1 = require("./sessions.controller");
+const kafka_controller_1 = require("./kafka.controller");
 const prisma_module_1 = require("../prisma/prisma.module");
 const kafka_module_1 = require("../kafka/kafka.module");
 let SessionsModule = exports.SessionsModule = class SessionsModule {
@@ -17,7 +18,7 @@ let SessionsModule = exports.SessionsModule = class SessionsModule {
 exports.SessionsModule = SessionsModule = __decorate([
     (0, common_1.Module)({
         imports: [prisma_module_1.PrismaModule, kafka_module_1.KafkaModule],
-        controllers: [sessions_controller_1.SessionsController],
+        controllers: [sessions_controller_1.SessionsController, kafka_controller_1.KafkaController],
         providers: [sessions_service_1.SessionsService],
     })
 ], SessionsModule);

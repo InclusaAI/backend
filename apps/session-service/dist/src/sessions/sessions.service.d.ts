@@ -10,6 +10,7 @@ export declare class SessionsService implements OnModuleDestroy {
     onModuleDestroy(): Promise<void>;
     start(presentationId: string, createSessionDto: CreateSessionDto, userId: string): Promise<Session>;
     end(sessionId: string, userId: string): Promise<Session>;
+    updateAccessibilityPreferences(userId: string, captionsEnabled: boolean, avatarEnabled: boolean): Promise<void>;
     private generateJoinCode;
     private createJoinToken;
 }

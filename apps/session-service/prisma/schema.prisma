@@ -33,10 +33,13 @@ model Presentation {
 model Session {
   id              String            @id @default(cuid())
   presentationId  String
+  userId          String
   communicationMode CommunicationMode
   joinCode        String?           @unique // Short, user-friendly code to join
   qrPayload       String?           // Payload for generating a QR code
   status          String            @default("PENDING") // PENDING, ACTIVE, ENDED
+  captionsEnabled Boolean           @default(false)
+  avatarEnabled   Boolean           @default(true)
   createdAt       DateTime          @default(now())
   startedAt       DateTime?
   endedAt         DateTime?

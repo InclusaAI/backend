@@ -41,6 +41,7 @@ let SessionsService = exports.SessionsService = class SessionsService {
         const session = await this.prisma.session.create({
             data: {
                 presentationId,
+                userId,
                 communicationMode: createSessionDto.communicationMode,
                 joinCode,
                 qrPayload,
@@ -82,6 +83,18 @@ let SessionsService = exports.SessionsService = class SessionsService {
         };
         this.kafkaClient.emit(kafka_contracts_1.SESSION_ENDED_EVENT, payload);
         return updatedSession;
+    }
+    async updateAccessibilityPreferences(userId, captionsEnabled, avatarEnabled) {
+        await this.prisma.session.updateMany({
+            where: {
+                userId,
+                status: 'ACTIVE',
+            },
+            data: {
+                captionsEnabled,
+                avatarEnabled,
+            },
+        });
     }
     generateJoinCode(length = 6) {
         return Math.random().toString(36).substring(2, 2 + length).toUpperCase();

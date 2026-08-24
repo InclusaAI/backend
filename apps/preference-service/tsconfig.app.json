@@ -1,9 +1,9 @@
 {
-  "extends": "./tsconfig.json",
+  "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "outDir": "../../dist/apps/preference-service",
-    "baseUrl": "./",
-    "paths": {}
+    "declaration": false,
+    "outDir": "../../dist/apps/preference-service"
   },
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "test", "**/*spec.ts"]
 }

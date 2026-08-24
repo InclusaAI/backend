@@ -40,6 +40,7 @@ export class SessionsService implements OnModuleDestroy {
     const session = await this.prisma.session.create({
       data: {
         presentationId,
+        userId,
         communicationMode: createSessionDto.communicationMode,
         joinCode,
         qrPayload,
@@ -91,6 +92,23 @@ export class SessionsService implements OnModuleDestroy {
     this.kafkaClient.emit(SESSION_ENDED_EVENT, payload);
 
     return updatedSession;
+  }
+
+  async updateAccessibilityPreferences(
+    userId: string,
+    captionsEnabled: boolean,
+    avatarEnabled: boolean,
+  ): Promise<void> {
+    await this.prisma.session.updateMany({
+      where: {
+        userId,
+        status: 'ACTIVE',
+      },
+      data: {
+        captionsEnabled,
+        avatarEnabled,
+      },
+    });
   }
 
   private generateJoinCode(length: number = 6): string {
