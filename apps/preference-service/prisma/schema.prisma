@@ -1,0 +1,35 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Accessibility channels a participant may need.
+/// Matches inclusaai_contracts.events.AccessibilityChannel
+enum AccessibilityChannel {
+  CAPTIONS
+  AVATAR
+  GESTURES
+  TRANSLATION
+  TTS
+}
+
+/// A participant's accessibility preferences for a specific session.
+/// One row per (session, participant) pair.
+model AccessibilityPreference {
+  id                       String   @id @default(cuid())
+  sessionId                String
+  participantId            String
+  channels                 AccessibilityChannel[]
+  captionLanguage          String?
+  translationTargetLanguage String?
+  signLanguage             String   @default("ASL")  // ADR-0002: ASL only for MVP
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@unique([sessionId, participantId])
+  @@map("accessibility_preferences")
+}
