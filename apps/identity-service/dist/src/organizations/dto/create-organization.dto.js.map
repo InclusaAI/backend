@@ -1,1 +1,0 @@
-{"version":3,"file":"create-organization.dto.js","sourceRoot":"","sources":["../../../../src/organizations/dto/create-organization.dto.ts"],"names":[],"mappings":";;;;;;;;;;;;AAAA,6CAA8C;AAC9C,qDAAuD;AAEvD,MAAa,qBAAqB;CAQjC;AARD,sDAQC;AADC;IANC,IAAA,qBAAW,EAAC;QACX,OAAO,EAAE,oBAAoB;QAC7B,WAAW,EAAE,8BAA8B;KAC5C,CAAC;IACD,IAAA,0BAAQ,GAAE;IACV,IAAA,4BAAU,GAAE;;mDACC"}

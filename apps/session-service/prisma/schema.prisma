@@ -1,8 +1,14 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// session-service — owns presentations, sessions, join tokens and participants.
+//
+// Per ADR-0003 this service has its own logical database. `organizationId` and
+// `ownerId` reference identity-service records but are deliberately plain
+// strings with no foreign key: cross-service reads go over REST/gRPC/Kafka.
 
+// Generated into this service so it is never overwritten by a sibling
+// service's `prisma generate` — see the note in identity-service's schema.
 generator client {
   provider = "prisma-client-js"
+  output   = "../generated/prisma"
 }
 
 datasource db {
@@ -19,33 +25,63 @@ enum CommunicationMode {
 model Presentation {
   id             String   @id @default(cuid())
   name           String
-  slideMetadata  Json     // To store metadata about slides, e.g., URLs, order
-  organizationId String   // Belongs to an organization from the identity service
-  ownerId        String   // Belongs to a user from the identity service
+  slideMetadata  Json // Metadata about slides, e.g. URLs and ordering
+  organizationId String // identity-service organization; no FK by design
+  ownerId        String // identity-service user; no FK by design
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   sessions Session[]
 
+  @@index([organizationId])
+  @@index([ownerId])
   @@map("presentations")
 }
 
 model Session {
-  id              String            @id @default(cuid())
-  presentationId  String
+  id                String            @id @default(cuid())
+  presentationId    String
+  userId            String // The presenter who started the session
   communicationMode CommunicationMode
-  joinCode        String?           @unique // Short, user-friendly code to join
-  qrPayload       String?           // Payload for generating a QR code
-  status          String            @default("PENDING") // PENDING, ACTIVE, ENDED
-  createdAt       DateTime          @default(now())
-  startedAt       DateTime?
-  endedAt         DateTime?
-  updatedAt       DateTime          @updatedAt
+  joinCode          String?           @unique // Short, user-friendly code to join
+  qrPayload         String? // Payload for generating a QR code
+  status            String            @default("PENDING") // PENDING, ACTIVE, ENDED
+  createdAt         DateTime          @default(now())
+  startedAt         DateTime?
+  endedAt           DateTime?
+  updatedAt         DateTime          @updatedAt
 
-  presentation    Presentation      @relation(fields: [presentationId], references: [id])
-  joinTokens      JoinToken[]
+  presentation Presentation         @relation(fields: [presentationId], references: [id])
+  joinTokens   JoinToken[]
+  participants SessionParticipant[]
 
+  @@index([userId])
+  @@index([status])
   @@map("sessions")
+}
+
+// One row per person attending a session.
+//
+// Accessibility settings live here rather than on Session because they are
+// per-participant: two people in the same session can independently enable
+// captions or the signing avatar. preference-service owns the durable
+// cross-session preference; these columns are that preference resolved for
+// this session, kept current by the accessibility.preference.updated consumer.
+model SessionParticipant {
+  id              String    @id @default(cuid())
+  sessionId       String
+  userId          String? // null for anonymous participants who joined by code
+  displayName     String?
+  captionsEnabled Boolean   @default(false)
+  avatarEnabled   Boolean   @default(true)
+  joinedAt        DateTime  @default(now())
+  leftAt          DateTime?
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, userId])
+  @@index([userId])
+  @@map("session_participants")
 }
 
 model JoinToken {
@@ -55,7 +91,7 @@ model JoinToken {
   expiresAt DateTime
   createdAt DateTime @default(now())
 
-  session   Session  @relation(fields: [sessionId], references: [id])
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@map("join_tokens")
 }
