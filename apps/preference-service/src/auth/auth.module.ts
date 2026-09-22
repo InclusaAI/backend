@@ -1,21 +1,16 @@
-import { Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
-import { PassportModule } from '@nestjs/passport';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { JwtStrategy } from './jwt.strategy';
+import { Module } from "@nestjs/common";
+import { PassportModule } from "@nestjs/passport";
+import { ConfigModule } from "@nestjs/config";
+import { JwtStrategy } from "@inclusaai/shared-auth";
 
+/**
+ * Registers the shared 'jwt' Passport strategy.
+ *
+ * This service only verifies tokens; identity-service is the only issuer, so
+ * there is no JwtModule here.
+ */
 @Module({
-  imports: [
-    PassportModule,
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: '7d' },
-      }),
-      inject: [ConfigService],
-    }),
-  ],
+  imports: [PassportModule, ConfigModule],
   providers: [JwtStrategy],
   exports: [PassportModule],
 })
