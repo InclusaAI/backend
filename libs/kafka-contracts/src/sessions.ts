@@ -1,6 +1,6 @@
-export const SESSION_CREATED_EVENT = 'session.created';
-export const SESSION_UPDATED_EVENT = 'session.updated';
-export const SESSION_ENDED_EVENT = 'session.ended';
+export const SESSION_CREATED_EVENT = "session.created";
+export const SESSION_UPDATED_EVENT = "session.updated";
+export const SESSION_ENDED_EVENT = "session.ended";
 
 export interface SessionCreatedPayload {
   sessionId: string;

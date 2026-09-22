@@ -5,7 +5,8 @@
 /**
  * The topic name for the event published when a user's accessibility preferences are updated.
  */
-export const ACCESSIBILITY_PREFERENCE_UPDATED_EVENT = 'accessibility.preference.updated';
+export const ACCESSIBILITY_PREFERENCE_UPDATED_EVENT =
+  "accessibility.preference.updated";
 
 /**
  * The payload for the ACCESSIBILITY_PREFERENCE_UPDATED_EVENT.

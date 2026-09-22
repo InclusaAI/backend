@@ -1,8 +1,8 @@
-import { Module } from '@nestjs/common';
-import { PreferencesService } from './preferences.service';
-import { PreferencesController } from './preferences.controller';
-import { PrismaModule } from '../prisma/prisma.module';
-import { KafkaModule } from '../kafka/kafka.module';
+import { Module } from "@nestjs/common";
+import { PreferencesService } from "./preferences.service";
+import { PreferencesController } from "./preferences.controller";
+import { PrismaModule } from "../prisma/prisma.module";
+import { KafkaModule } from "../kafka/kafka.module";
 
 @Module({
   imports: [PrismaModule, KafkaModule],
