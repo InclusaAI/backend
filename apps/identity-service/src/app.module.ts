@@ -1,12 +1,11 @@
-import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
-import { AuthModule } from './auth/auth.module';
-import { PrismaModule } from './prisma/prisma.module';
-import { OrganizationsModule } from './organizations/organizations.module';
-import { InvitationsModule } from './invitations/invitations.module';
-import { PreferencesModule } from './preferences/preferences.module';
+import { Module } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
+import { AppController } from "./app.controller";
+import { AppService } from "./app.service";
+import { AuthModule } from "./auth/auth.module";
+import { PrismaModule } from "./prisma/prisma.module";
+import { OrganizationsModule } from "./organizations/organizations.module";
+import { InvitationsModule } from "./invitations/invitations.module";
 
 @Module({
   imports: [
@@ -17,7 +16,6 @@ import { PreferencesModule } from './preferences/preferences.module';
     PrismaModule,
     OrganizationsModule,
     InvitationsModule,
-    PreferencesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
