@@ -8,16 +8,24 @@
     "build": "tsc -p tsconfig.json",
     "lint": "eslint . --ext .ts --fix"
   },
-  "dependencies": {
+  "comments": {
+    "peerDependencies": "passport keeps its registered strategies in module-level state. If this library resolved its own copy of passport while a consuming service resolved another, JwtStrategy would register into one registry and that service's guards would look in the other - failing with 'Unknown authentication strategy \"jwt\"'. Peer dependencies force a single shared instance."
+  },
+  "peerDependencies": {
     "@nestjs/common": "^10.0.0",
     "@nestjs/config": "^3.0.0",
     "@nestjs/passport": "^10.0.0",
-    "passport": "^0.6.0",
+    "passport": "^0.7.0",
     "passport-jwt": "^4.0.1"
   },
   "devDependencies": {
+    "@nestjs/common": "^10.0.0",
+    "@nestjs/config": "^3.0.0",
+    "@nestjs/passport": "^10.0.0",
     "@types/passport-jwt": "^3.0.9",
-    "typescript": "^5.1.3",
-    "eslint": "^8.42.0"
+    "eslint": "^8.42.0",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "typescript": "^5.1.3"
   }
 }
