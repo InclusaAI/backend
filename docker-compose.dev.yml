@@ -28,7 +28,10 @@ services:
     image: redis:7-alpine
     container_name: inclusaai-redis
     ports:
-      - '6379:6379'
+      # Host port 6390 for the same reason Postgres uses 5440: a native
+      # redis-server on 6379 competes for the port, and which server you reach
+      # is then non-deterministic. Inside the compose network it is still 6379.
+      - '6390:6379'
     volumes:
       - redis-data:/data
     healthcheck:
@@ -99,7 +102,9 @@ services:
           session.created \
           session.updated \
           session.ended \
-          accessibility.preference.updated; do
+          session.participant.updated \
+          accessibility.preference.updated \
+          ai.transcript.segment; do
           kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists \
             --topic "$$topic" --partitions 1 --replication-factor 1
         done
