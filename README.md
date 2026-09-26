@@ -70,6 +70,11 @@ overwrite the last.
     makes which one you reach non-deterministic (the failure looks like a wrong
     password). Inside the compose network it is still 5432.
 
+    **Redis is published on host port 6390**, not 6379, for the same reason: a
+    native `redis-server` on 6379 makes which server you reach non-deterministic,
+    and fanout-service then silently behaves as if its instances were isolated.
+    Inside the compose network it is still 6379.
+
     If you have a `postgres-data` volume predating the per-service split, the
     init script creating the three databases will not re-run — recreate it with
     `docker compose -f docker-compose.dev.yml down -v`.

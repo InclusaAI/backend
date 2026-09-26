@@ -2,7 +2,7 @@
 
 Implementation status of the InclusaAI platform-backend MVP.
 
-**Last updated:** 2026-09-22
+**Last updated:** 2026-09-25
 **Canonical spec:** [`platform-backend-IMPLEMENTATION.md`](../platform-backend-IMPLEMENTATION.md)
 
 > This is the single source of truth for status. A second `DEVELOPMENT-STATUS.md`
@@ -17,7 +17,7 @@ Implementation status of the InclusaAI platform-backend MVP.
 | #2 | `identity-service` | Auth, organizations, invitations | DONE |
 | #3 | `session-service` | Presentations, sessions, join by code | DONE |
 | #4 | `preference-service` | Accessibility preference CRUD | DONE — merge gated on `ai-services` sign-off of the event schema |
-| #5 | `fanout-service` | Caption fan-out over WebSocket | NOT STARTED |
+| #5 | `fanout-service` | Caption fan-out over WebSocket | DONE — `ai.transcript.segment` schema pending ai-services confirmation |
 | #6 | `libs/*` | Shared contracts and auth | DONE |
 | #7 | `presenter-assist-service` | Presenter recommendations | DEFERRED (per spec §7) |
 
@@ -31,7 +31,8 @@ Run from the repo root.
 | Lint | `pnpm lint` | **PASSING** — 9/9 packages, 0 errors |
 | Unit tests | `pnpm test` | **PASSING** — 9 tests |
 | Migrations | `pnpm --filter <svc> db:migrate` | **APPLIED** — one `init` migration per service |
-| E2E tests | `pnpm --filter <svc> test:e2e` | **PASSING** — 16 tests (identity 4, session 6, preference 6) |
+| E2E tests | `pnpm --filter <svc> test:e2e` | **PASSING** — 32 tests (identity 4, session 12, preference 6, fanout 10) |
+| Fanout load test | `pnpm --filter fanout-service test:load` | **PASSING** — 50 sockets, 2500/2500 delivered, p95 102ms |
 | Cross-service flow | manual smoke | **PASSING** — see below |
 
 The cross-service smoke test exercises the path the realignment exists to support:
@@ -46,8 +47,12 @@ is applied on joining each. `preferences.e2e-spec.ts` covers persistence across
 two login sessions and a participant's very first `PATCH` (which previously
 returned 500 because no row existed yet).
 
-`fanout-service` and `presenter-assist-service` are scaffolds with no tests; their
-`test` scripts use `--passWithNoTests` so an empty suite is not reported as a failure.
+`presenter-assist-service` is a scaffold with no tests; its `test` script uses
+`--passWithNoTests` so an empty suite is not reported as a failure.
+
+The fanout e2e suite runs **two instances sharing one consumer group**, as they
+would in production, so cross-instance delivery and reconnection recovery are
+exercised rather than assumed.
 
 ## Architecture
 
@@ -84,6 +89,35 @@ presenter — two people in the same session could not have different settings.
 Postgres treats NULLs as distinct, so the `(sessionId, userId)` unique constraint
 still permits many anonymous attendees while keeping signed-in attendance
 idempotent across reconnects.
+
+### Caption fan-out (issue #5)
+
+Captions reach the participants who asked for them, and nobody else:
+
+```
+ai-services -> ai.transcript.segment -> ONE fanout instance (shared consumer group)
+            -> broadcast to session:{id}:captions -> Redis stream -> every instance -> sockets
+```
+
+- **Filtering is room membership.** Only sockets whose participant enabled
+  captions are in the captions room, so nothing is sent to a client that would
+  have to discard it. A preference change moves that participant's sockets
+  between rooms, wherever those sockets are.
+- **Sockets are authenticated by a participant token**, issued by session-service
+  at join and signed with `PARTICIPANT_TOKEN_SECRET` — deliberately not
+  `JWT_SECRET`, so a participant token cannot act as an account token and an
+  account token cannot open a socket. There is no "join session" socket message,
+  so a client cannot listen to a session it was not admitted to.
+- **Participant settings are materialized in Redis** from
+  `session.participant.updated`, which session-service publishes when someone
+  joins, changes a setting for the session, or has their durable preference
+  applied.
+- **Reconnection** uses socket.io connection state recovery, which replays what
+  the client missed. It requires the Redis *streams* adapter; the classic Redis
+  adapter does not support it.
+- **Anonymous participants** change their own settings for a session through
+  `PATCH /sessions/participants/me`, authenticated by the participant token.
+  Without it, they would default to captions off with no way to turn them on.
 
 ### Shared auth and the single-Passport rule
 
@@ -126,6 +160,11 @@ commonly occupy 5432 and 5433; two servers competing for a port makes which one
 you reach non-deterministic, and the failure surfaces confusingly as an
 authentication error. Inside the compose network it is still 5432.
 
+**Redis is published on host port 6390**, not 6379, for the same reason. This
+one is worth knowing because it fails quietly: with two Redis servers in play,
+fanout-service instances can end up on different ones and behave as if each were
+alone, so cross-instance delivery and reconnection recovery simply stop working.
+
 `JWT_SECRET` must be **identical** across every service that verifies tokens;
 only `identity-service` issues them.
 
@@ -138,7 +177,7 @@ with `docker compose -f docker-compose.dev.yml down -v`.
 | `identity-service` | 3001 | `/api/docs`, `/api/openapi.json` |
 | `session-service` | 3002 | `/api/docs`, `/api/openapi.json` |
 | `preference-service` | 3003 | `/api/docs`, `/api/openapi.json` |
-| `fanout-service` | 3004 | scaffold |
+| `fanout-service` | 3004 | `/api/docs`, `/api/openapi.json`, WebSocket — see `apps/fanout-service/README.md` |
 | `presenter-assist-service` | 3005 | scaffold |
 
 API documentation is Swagger UI (`@nestjs/swagger`). An earlier revision of this
@@ -149,8 +188,11 @@ document described it as Scalar; that was inaccurate.
 | Event | Producer | Consumer |
 |---|---|---|
 | `identity.invitation.created` | `identity-service` | *(none yet)* |
-| `session.created` / `session.ended` | `session-service` | *(none yet)* |
+| `session.created` | `session-service` | *(none yet)* |
+| `session.ended` | `session-service` | `fanout-service` |
+| `session.participant.updated` | `session-service` | `fanout-service` |
 | `accessibility.preference.updated` | `preference-service` | `session-service` |
+| `ai.transcript.segment` | `ai-services` *(not built yet)* | `fanout-service` |
 
 Event consumers use `@EventPattern`, not `@MessagePattern` — on the Kafka
 transport the latter implies request/reply and waits on a response topic.
@@ -166,9 +208,15 @@ failed publish is logged as `Failed to publish <topic>` and is **not retried**.
 
 Carried forward deliberately; none block the checks above.
 
-- **`fanout-service` is unimplemented** (issue #5). Needs socket.io per ADR-0010,
-  Redis state, and an `ai.transcript.segment` consumer. This is the piece that
-  makes delivery *personalized*.
+- **Fanout reconnection covers about two minutes**, and no more than
+  `FANOUT_STREAM_MAXLEN` entries of shared broadcast history. Beyond that a
+  client reconnects fresh and the captions it missed are gone. A backlog
+  endpoint would remove the limit.
+- **Fanout relays captions only.** Avatar and gesture fan-out are deferred; the
+  issue asks for that deferral to be confirmed with ai-services and web-apps.
+- **`ai.transcript.segment` has no agreed schema.** The one in
+  `libs/kafka-contracts` is this repo's proposal, since no contract existed and
+  ai-services' spec says schemas live here.
 - **Dockerfiles are broken.** All five run `pnpm install` on `node:18-alpine`,
   which ships no pnpm and has no `corepack enable`; none run `prisma generate`;
   and the spec calls for Node 20+.
