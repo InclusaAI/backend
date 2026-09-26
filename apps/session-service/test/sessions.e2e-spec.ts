@@ -2,6 +2,7 @@ import * as request from "supertest";
 import { Test } from "@nestjs/testing";
 import { INestApplication, ValidationPipe } from "@nestjs/common";
 import * as jwt from "jsonwebtoken";
+import { PARTICIPANT_TOKEN_AUDIENCE } from "@inclusaai/shared-types";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { CommunicationMode, Presentation } from "../src/prisma/client";
@@ -60,6 +61,14 @@ describe("Sessions (e2e)", () => {
     await app.close();
   });
 
+  /** Starts an ACTIVE session on the shared presentation. */
+  const startSession = (communicationMode: CommunicationMode) =>
+    request(app.getHttpServer())
+      .post(`/presentations/${presentation.id}/sessions`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ communicationMode })
+      .expect(201);
+
   describe("POST /presentations/:id/sessions", () => {
     it("starts a session and returns a join code", () => {
       return request(app.getHttpServer())
@@ -100,6 +109,110 @@ describe("Sessions (e2e)", () => {
         .post("/sessions/join")
         .send({ joinCode: "ZZZZZZ" })
         .expect(404);
+    });
+
+    // The participant token is what lets a socket prove which participant and
+    // session it belongs to, so fanout-service can filter per participant.
+    it("returns a participant token naming the participant and session", async () => {
+      const started = await startSession(CommunicationMode.SPEECH);
+
+      const joined = await request(app.getHttpServer())
+        .post("/sessions/join")
+        .send({ joinCode: started.body.joinCode })
+        .expect(201);
+
+      expect(typeof joined.body.participantToken).toEqual("string");
+
+      const claims = jwt.verify(
+        joined.body.participantToken,
+        process.env.PARTICIPANT_TOKEN_SECRET as string,
+        { audience: PARTICIPANT_TOKEN_AUDIENCE },
+      ) as Record<string, unknown>;
+
+      expect(claims.sub).toEqual(joined.body.id);
+      expect(claims.sid).toEqual(started.body.id);
+      expect(claims.uid).toBeNull();
+      expect(claims.captionsEnabled).toBe(false);
+    });
+
+    it("does not sign participant tokens with JWT_SECRET", async () => {
+      const started = await startSession(CommunicationMode.SPEECH);
+      const joined = await request(app.getHttpServer())
+        .post("/sessions/join")
+        .send({ joinCode: started.body.joinCode })
+        .expect(201);
+
+      expect(() =>
+        jwt.verify(
+          joined.body.participantToken,
+          process.env.JWT_SECRET as string,
+        ),
+      ).toThrow();
+    });
+  });
+
+  describe("PATCH /sessions/participants/me", () => {
+    /** Joins a fresh session and returns the participant token. */
+    const joinAnonymously = async (): Promise<{
+      participantToken: string;
+      participantId: string;
+    }> => {
+      const started = await startSession(CommunicationMode.HYBRID);
+      const joined = await request(app.getHttpServer())
+        .post("/sessions/join")
+        .send({ joinCode: started.body.joinCode })
+        .expect(201);
+
+      return {
+        participantToken: joined.body.participantToken,
+        participantId: joined.body.id,
+      };
+    };
+
+    it("lets an anonymous participant turn captions on for their session", async () => {
+      const { participantToken, participantId } = await joinAnonymously();
+
+      await request(app.getHttpServer())
+        .patch("/sessions/participants/me")
+        .set("Authorization", `Bearer ${participantToken}`)
+        .send({ captionsEnabled: true })
+        .expect(200)
+        .then((res) => {
+          expect(res.body.id).toEqual(participantId);
+          expect(res.body.captionsEnabled).toBe(true);
+          // Untouched settings keep their value.
+          expect(res.body.avatarEnabled).toBe(true);
+        });
+
+      const stored = await prisma.sessionParticipant.findUnique({
+        where: { id: participantId },
+      });
+      expect(stored?.captionsEnabled).toBe(true);
+    });
+
+    it("rejects a request with no token", () => {
+      return request(app.getHttpServer())
+        .patch("/sessions/participants/me")
+        .send({ captionsEnabled: true })
+        .expect(401);
+    });
+
+    it("rejects an account token, which has no participant audience", () => {
+      return request(app.getHttpServer())
+        .patch("/sessions/participants/me")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ captionsEnabled: true })
+        .expect(401);
+    });
+
+    it("rejects a non-boolean value", async () => {
+      const { participantToken } = await joinAnonymously();
+
+      return request(app.getHttpServer())
+        .patch("/sessions/participants/me")
+        .set("Authorization", `Bearer ${participantToken}`)
+        .send({ captionsEnabled: "yes" })
+        .expect(400);
     });
   });
 
