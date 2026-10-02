@@ -13,7 +13,10 @@ import { captionsRoom, participantRoom, sessionRoom } from "./rooms";
 /** The event clients listen for. */
 export const CAPTION_SEGMENT_EVENT = "transcript.segment";
 
-/** What a client receives: a subset of the Kafka payload, never the raw message. */
+/**
+ * What a client receives: a subset of the Kafka payload, never the raw
+ * message, and camelCase like the rest of the client-facing API.
+ */
 export interface CaptionSegmentMessage {
   segmentId: string;
   sequence: number;
@@ -22,6 +25,12 @@ export interface CaptionSegmentMessage {
   language?: string;
   startMs: number;
   endMs: number;
+  /**
+   * Who was speaking. ai-services identifies a speaker by participant id, so
+   * the name is attached here from what session.participant.updated told us.
+   * Absent when the speaker is unknown or gave no name.
+   */
+  speakerName?: string;
 }
 
 interface ParticipantSocketData {

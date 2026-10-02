@@ -5,6 +5,8 @@ import { REDIS_CLIENT, RedisClient } from "../redis/redis.module";
 export interface ParticipantState {
   captionsEnabled: boolean;
   avatarEnabled: boolean;
+  /** Null when the participant gave no name, or nothing is known about them. */
+  displayName: string | null;
 }
 
 /** Long enough to outlive any session; this state is disposable. */
@@ -45,6 +47,8 @@ export class ParticipantStateStore {
       sessionId: event.sessionId,
       captionsEnabled: event.captionsEnabled ? "1" : "0",
       avatarEnabled: event.avatarEnabled ? "1" : "0",
+      // Redis hashes hold strings, so an absent name is stored as empty.
+      displayName: event.displayName ?? "",
       updatedAt: event.updatedAt,
     });
     await this.redis.expire(key, TTL_SECONDS);
@@ -72,6 +76,7 @@ export class ParticipantStateStore {
     return {
       captionsEnabled: stored.captionsEnabled === "1",
       avatarEnabled: stored.avatarEnabled === "1",
+      displayName: stored.displayName || null,
     };
   }
 

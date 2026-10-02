@@ -31,8 +31,8 @@ Run from the repo root.
 | Lint | `pnpm lint` | **PASSING** — 9/9 packages, 0 errors |
 | Unit tests | `pnpm test` | **PASSING** — 9 tests |
 | Migrations | `pnpm --filter <svc> db:migrate` | **APPLIED** — one `init` migration per service |
-| E2E tests | `pnpm --filter <svc> test:e2e` | **PASSING** — 32 tests (identity 4, session 12, preference 6, fanout 10) |
-| Fanout load test | `pnpm --filter fanout-service test:load` | **PASSING** — 50 sockets, 2500/2500 delivered, p95 102ms |
+| E2E tests | `pnpm --filter <svc> test:e2e` | **PASSING** — 34 tests (identity 4, session 12, preference 6, fanout 12) |
+| Fanout load test | `pnpm --filter fanout-service test:load` | **PASSING** — 50 sockets, 2500/2500 delivered, p50 ~30ms |
 | Cross-service flow | manual smoke | **PASSING** — see below |
 
 The cross-service smoke test exercises the path the realignment exists to support:
@@ -199,6 +199,28 @@ transport the latter implies request/reply and waits on a response topic.
 
 Topics are provisioned by the one-shot `kafka-init` container in
 `docker-compose.dev.yml` (1 partition each); add new contract topics there.
+
+**Message keys and ordering.** Events are keyed — by `sessionId` for session and
+participant events, by `userId` for preferences — so one session's or one
+participant's events stay in order even with several partitions. Each event also
+carries a `schemaVersion` and a timestamp, so a consumer can tell formats apart
+and ignore an update older than the state it holds.
+
+**`accessibility.preference.updated` is compacted.** Keyed by `userId`, the topic
+retains each participant's latest setting indefinitely, so a consumer reading
+from the beginning learns the current state of everyone, however long ago they
+set it. This matters because there is no API for reading another user's
+preferences: the topic is the only source. (Decided with the `ai-services`
+questions on issue #4.)
+
+**Naming.** Events this repo publishes are camelCase. `ai.transcript.segment` is
+snake_case, deliberately: it is the one event published by a Python service, and
+it matches the convention on that side.
+
+**Speaker names.** `ai.transcript.segment` identifies a speaker by participant id
+only — display names live in session-service and never reach ai-services.
+`session.participant.updated` carries `displayName`, and fanout-service attaches
+the name when it relays a caption.
 Producers run in `producerOnlyMode` (none of them uses request/reply) and publish
 fire-and-forget, but each service tracks in-flight events and drains them on
 shutdown before disconnecting, so a deploy does not drop events mid-send. A
@@ -229,7 +251,14 @@ Carried forward deliberately; none block the checks above.
   *is* wired (`enableShutdownHooks`, plus draining in-flight Kafka events).
 - **Event delivery is at-most-once.** Events are published after the database
   write with no outbox, so an event is lost (and logged) if Kafka is unavailable
-  at that moment.
+  at that moment. Reviewed and accepted for MVP; revisit afterwards. A
+  transactional outbox is the fix, at the cost of a table, a worker, and
+  consumers having to tolerate duplicates. Note the compacted preferences topic
+  limits the damage: a fresh consumer still learns everyone's current settings.
+- **The fanout load test does not gate on p95.** On a developer machine the tail
+  measures host contention, not the service (p50 held at ~30ms while p95 ranged
+  75–900ms, and was as wide with 10 sockets as with 50). Delivery and p50 are
+  gated; set `LOAD_MAX_P95_MS` to enforce the tail on a quiet runner.
 - **E2E tests do not assert that events are published.** They pass with Kafka
   down; publication is currently verified only by the manual smoke test.
 - **`accessibility.preference.updated` is published without a message key**, so

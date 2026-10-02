@@ -10,8 +10,12 @@ import {
 } from "@inclusaai/shared-types";
 import {
   AI_TRANSCRIPT_SEGMENT_EVENT,
+  AI_TRANSCRIPT_SEGMENT_SCHEMA_VERSION,
   SESSION_ENDED_EVENT,
   SESSION_PARTICIPANT_UPDATED_EVENT,
+  SESSION_PARTICIPANT_UPDATED_SCHEMA_VERSION,
+  SessionParticipantUpdatedPayload,
+  TranscriptSegmentPayload,
 } from "@inclusaai/kafka-contracts";
 import { AppModule } from "../src/app.module";
 import { RedisIoAdapter } from "../src/realtime/redis-io.adapter";
@@ -28,7 +32,9 @@ const PORT_A = 3104;
 const PORT_B = 3105;
 const GROUP = `fanout-e2e-${Date.now()}`;
 
-type Recorder = Socket & { received: { text: string; sequence: number }[] };
+type Recorder = Socket & {
+  received: { text: string; sequence: number; speakerName?: string }[];
+};
 
 const broker = process.env.KAFKA_BROKER ?? "localhost:29092";
 const secret = process.env.PARTICIPANT_TOKEN_SECRET as string;
@@ -106,7 +112,7 @@ function connect(port: number, token: string): Recorder {
   socket.received = [];
   socket.on(
     CAPTION_SEGMENT_EVENT,
-    (segment: { text: string; sequence: number }) =>
+    (segment: { text: string; sequence: number; speakerName?: string }) =>
       socket.received.push(segment),
   );
   sockets.push(socket);
@@ -120,29 +126,32 @@ function connected(socket: Socket): Promise<void> {
   });
 }
 
+/** snake_case, as ai-services publishes it. */
 async function publishSegment(
   sessionId: string,
   text = "hello",
+  speakerParticipantId?: string,
 ): Promise<number> {
   const seq = ++sequence;
+  const segment: TranscriptSegmentPayload = {
+    schema_version: AI_TRANSCRIPT_SEGMENT_SCHEMA_VERSION,
+    session_id: sessionId,
+    segment_id: unique("seg"),
+    sequence: seq,
+    text,
+    is_final: true,
+    language: "en-US",
+    start_ms: 0,
+    end_ms: 1000,
+    produced_at: new Date().toISOString(),
+    ...(speakerParticipantId
+      ? { speaker_participant_id: speakerParticipantId }
+      : {}),
+  };
+
   await producer.send({
     topic: AI_TRANSCRIPT_SEGMENT_EVENT,
-    messages: [
-      {
-        key: sessionId,
-        value: JSON.stringify({
-          sessionId,
-          segmentId: unique("seg"),
-          sequence: seq,
-          text,
-          isFinal: true,
-          language: "en-US",
-          startMs: 0,
-          endMs: 1000,
-          producedAt: new Date().toISOString(),
-        }),
-      },
-    ],
+    messages: [{ key: sessionId, value: JSON.stringify(segment) }],
   });
   return seq;
 }
@@ -151,22 +160,22 @@ async function publishParticipant(
   sessionId: string,
   participantId: string,
   captionsEnabled: boolean,
+  displayName: string | null = null,
 ): Promise<void> {
+  const event: SessionParticipantUpdatedPayload = {
+    schemaVersion: SESSION_PARTICIPANT_UPDATED_SCHEMA_VERSION,
+    sessionId,
+    participantId,
+    userId: null,
+    displayName,
+    captionsEnabled,
+    avatarEnabled: true,
+    updatedAt: new Date().toISOString(),
+  };
+
   await producer.send({
     topic: SESSION_PARTICIPANT_UPDATED_EVENT,
-    messages: [
-      {
-        key: sessionId,
-        value: JSON.stringify({
-          sessionId,
-          participantId,
-          userId: null,
-          captionsEnabled,
-          avatarEnabled: true,
-          updatedAt: new Date().toISOString(),
-        }),
-      },
-    ],
+    messages: [{ key: sessionId, value: JSON.stringify(event) }],
   });
 }
 
@@ -282,6 +291,41 @@ describe("Fanout (e2e)", () => {
 
       expect(inA.received).toHaveLength(1);
       expect(inB.received).toHaveLength(0);
+    });
+
+    // ai-services identifies a speaker by participant id only; the name comes
+    // from what session.participant.updated told us.
+    it("attaches the speaker's display name to a caption", async () => {
+      const sessionId = unique("session-speaker");
+      const speakerId = unique("p-speaker");
+      const listener = connect(
+        PORT_A,
+        tokenFor(unique("p-listener"), sessionId, true),
+      );
+      await connected(listener);
+
+      await publishParticipant(sessionId, speakerId, false, "Sam");
+      await settle();
+      await publishSegment(sessionId, "named speaker", speakerId);
+      await settle();
+
+      expect(listener.received).toHaveLength(1);
+      expect(listener.received[0].speakerName).toEqual("Sam");
+    });
+
+    it("omits the speaker name when the speaker is unknown", async () => {
+      const sessionId = unique("session-anon-speaker");
+      const listener = connect(
+        PORT_A,
+        tokenFor(unique("p-listener"), sessionId, true),
+      );
+      await connected(listener);
+
+      await publishSegment(sessionId, "no speaker given");
+      await settle();
+
+      expect(listener.received).toHaveLength(1);
+      expect(listener.received[0].speakerName).toBeUndefined();
     });
 
     it("reaches sockets on every instance, wherever the event was consumed", async () => {

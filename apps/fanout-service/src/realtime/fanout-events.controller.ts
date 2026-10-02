@@ -30,22 +30,32 @@ export class FanoutEventsController {
   ) {}
 
   @EventPattern(AI_TRANSCRIPT_SEGMENT_EVENT)
-  handleTranscriptSegment(@Payload() segment: TranscriptSegmentPayload): void {
-    if (!segment?.sessionId || typeof segment.text !== "string") {
+  async handleTranscriptSegment(
+    @Payload() segment: TranscriptSegmentPayload,
+  ): Promise<void> {
+    if (!segment?.session_id || typeof segment.text !== "string") {
       this.logger.warn(
         "Discarded a transcript segment with no session or text",
       );
       return;
     }
 
-    this.gateway.broadcastSegment(segment.sessionId, {
-      segmentId: segment.segmentId,
+    // ai-services names a speaker by participant id; the display name lives in
+    // session-service and reached us on session.participant.updated. Only look
+    // it up when there is a speaker to name.
+    const speaker = segment.speaker_participant_id
+      ? await this.state.get(segment.speaker_participant_id)
+      : null;
+
+    this.gateway.broadcastSegment(segment.session_id, {
+      segmentId: segment.segment_id,
       sequence: segment.sequence,
       text: segment.text,
-      isFinal: segment.isFinal,
+      isFinal: segment.is_final,
       language: segment.language,
-      startMs: segment.startMs,
-      endMs: segment.endMs,
+      startMs: segment.start_ms,
+      endMs: segment.end_ms,
+      ...(speaker?.displayName ? { speakerName: speaker.displayName } : {}),
     });
   }
 

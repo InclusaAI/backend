@@ -36,13 +36,17 @@ session that has ended is refused with `connect_error`.
 
 ```js
 socket.on("transcript.segment", (segment) => {
-  // { segmentId, sequence, text, isFinal, language?, startMs, endMs }
+  // { segmentId, sequence, text, isFinal, language?, startMs, endMs, speakerName? }
 });
 ```
 
 Segments arrive only while the participant has captions enabled. `segmentId` is
 stable across interim and final versions of the same utterance, so replace a
 segment you already hold rather than appending it; `sequence` gives the order.
+
+`speakerName` is the speaker's display name, present when ai-services said who
+was speaking and that person gave a name. ai-services identifies a speaker by
+participant id; this service attaches the name.
 
 ### 4. Turning captions on and off
 
@@ -98,6 +102,7 @@ pnpm --filter fanout-service start:dev
 |---|---|
 | e2e (needs Kafka and Redis) | `pnpm --filter fanout-service test:e2e` |
 | Load test: 50 sockets, 50 captions | `pnpm --filter fanout-service test:load` |
+| Load test with a p95 gate (idle machine only) | `LOAD_MAX_P95_MS=150 pnpm --filter fanout-service test:load` |
 | Health | `curl http://localhost:3004/healthz` |
 
 ## How it works
@@ -113,6 +118,16 @@ pnpm --filter fanout-service start:dev
   once; the Redis adapter delivers the broadcast to sockets everywhere.
 - **Reconnection** uses socket.io connection state recovery, which needs the
   Redis *streams* adapter; the classic Redis adapter does not support it.
+- **Speaker names are attached here.** `ai.transcript.segment` carries a
+  participant id, because display names live in session-service and never reach
+  ai-services. The name comes from `session.participant.updated`, which is
+  already in Redis for filtering.
+
+The load test gates on full delivery and p50, and prints p95 without enforcing
+it: on a developer machine the tail measures host contention rather than this
+service (measured p50 held at ~30ms while p95 ranged from 75ms to 900ms, and
+was just as wide with 10 sockets as with 50). Enforce p95 on a quiet runner
+with `LOAD_MAX_P95_MS`.
 
 ## Limits
 
