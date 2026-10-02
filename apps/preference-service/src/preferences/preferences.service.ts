@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { UpdatePreferencesDto } from "./dto/update-preferences.dto";
 import {
   ACCESSIBILITY_PREFERENCE_UPDATED_EVENT,
+  ACCESSIBILITY_PREFERENCE_UPDATED_SCHEMA_VERSION,
   AccessibilityPreferenceUpdatedPayload,
 } from "@inclusaai/kafka-contracts";
 import { ClientKafka } from "@nestjs/microservices";
@@ -53,13 +54,23 @@ export class PreferencesService implements OnModuleDestroy {
 
     // Construct the event payload with the full current state
     const payload: AccessibilityPreferenceUpdatedPayload = {
+      schemaVersion: ACCESSIBILITY_PREFERENCE_UPDATED_SCHEMA_VERSION,
       userId: updatedPreferences.userId,
       captionsEnabled: updatedPreferences.captionsEnabled,
       avatarEnabled: updatedPreferences.avatarEnabled,
+      // The row's own timestamp, not publish time, so a consumer comparing two
+      // messages is comparing when the preferences were actually stored.
+      updatedAt: updatedPreferences.updatedAt.toISOString(),
     };
 
-    // Publish the event to Kafka only after the DB update is successful
-    this.publish(ACCESSIBILITY_PREFERENCE_UPDATED_EVENT, payload);
+    // Publish the event to Kafka only after the DB update is successful.
+    // Keyed by userId: it keeps one participant's updates in order, and it is
+    // what lets the compacted topic retain each participant's latest state.
+    this.publish(
+      ACCESSIBILITY_PREFERENCE_UPDATED_EVENT,
+      payload,
+      updatedPreferences.userId,
+    );
 
     return updatedPreferences;
   }
@@ -69,9 +80,13 @@ export class PreferencesService implements OnModuleDestroy {
    * it tracked until acknowledged so shutdown can drain it. A failed send is
    * logged: previously it was dropped with no trace at all.
    */
-  private publish(topic: string, payload: unknown): void {
+  private publish(topic: string, payload: unknown, key?: string): void {
+    // A key keeps one participant's updates on a single partition, and
+    // therefore in order. It is also what compaction uses to decide which
+    // messages supersede which.
+    const message = key === undefined ? payload : { key, value: payload };
     const sent: Promise<unknown> = lastValueFrom(
-      this.kafkaClient.emit(topic, payload),
+      this.kafkaClient.emit(topic, message),
       { defaultValue: undefined },
     )
       .catch((error: Error) =>

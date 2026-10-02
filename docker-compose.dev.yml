@@ -82,9 +82,9 @@ services:
       - kafka
     restart: "no"
     entrypoint: ["/bin/bash", "-c"]
-    # 1 partition matches what auto-creation produced before. Raising it on
-    # accessibility.preference.updated first needs messages keyed by userId,
-    # or updates for one participant can be consumed out of order.
+    # 1 partition each. Every event that needs ordering is keyed (by session or
+    # by user), so partitions can be raised without reordering one key's
+    # messages.
     command:
       - |
         # Bounded, so a broker that never comes up shows as Exited (1) rather
@@ -108,6 +108,16 @@ services:
           kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists \
             --topic "$$topic" --partitions 1 --replication-factor 1
         done
+
+        # accessibility.preference.updated is compacted: keyed by userId, it
+        # keeps each participant's latest setting for as long as the topic
+        # lives. There is no API for reading another user's preferences, so
+        # this topic is how a consumer (ai-services) learns the current state
+        # of participants who last changed a setting long ago. Applied with
+        # --alter as well, since --create skips a topic that already exists.
+        kafka-configs --bootstrap-server kafka:9092 --alter \
+          --entity-type topics --entity-name accessibility.preference.updated \
+          --add-config cleanup.policy=compact
         echo "kafka topics ready"
 
 volumes:

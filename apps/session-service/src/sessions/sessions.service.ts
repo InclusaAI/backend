@@ -25,6 +25,7 @@ import {
   SESSION_CREATED_EVENT,
   SESSION_ENDED_EVENT,
   SESSION_PARTICIPANT_UPDATED_EVENT,
+  SESSION_PARTICIPANT_UPDATED_SCHEMA_VERSION,
   SessionCreatedPayload,
   SessionEndedPayload,
   SessionParticipantUpdatedPayload,
@@ -333,9 +334,11 @@ export class SessionsService implements OnModuleDestroy {
   /** Publishes a participant's current settings for their session. */
   private publishParticipant(participant: SessionParticipant): void {
     const payload: SessionParticipantUpdatedPayload = {
+      schemaVersion: SESSION_PARTICIPANT_UPDATED_SCHEMA_VERSION,
       sessionId: participant.sessionId,
       participantId: participant.id,
       userId: participant.userId,
+      displayName: participant.displayName,
       captionsEnabled: participant.captionsEnabled,
       avatarEnabled: participant.avatarEnabled,
       updatedAt: new Date().toISOString(),

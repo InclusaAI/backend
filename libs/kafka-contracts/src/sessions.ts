@@ -21,6 +21,9 @@ export interface SessionEndedPayload {
 
 export const SESSION_PARTICIPANT_UPDATED_EVENT = "session.participant.updated";
 
+/** Current shape of SessionParticipantUpdatedPayload. */
+export const SESSION_PARTICIPANT_UPDATED_SCHEMA_VERSION = 1;
+
 /**
  * A participant's accessibility settings as they apply in one session.
  *
@@ -32,11 +35,21 @@ export const SESSION_PARTICIPANT_UPDATED_EVENT = "session.participant.updated";
  * proposed to ai-services for per-session pipeline gating (issue #4).
  */
 export interface SessionParticipantUpdatedPayload {
+  /** Which shape this message follows; see the note on the other events. */
+  schemaVersion: number;
+
   sessionId: string;
   participantId: string;
 
   /** null for an anonymous participant who joined by code. */
   userId: string | null;
+
+  /**
+   * What the participant is called, as they gave it when joining. Carried here
+   * so a consumer can label a speaker without querying session-service:
+   * ai.transcript.segment identifies a speaker by participant id only.
+   */
+  displayName: string | null;
 
   captionsEnabled: boolean;
   avatarEnabled: boolean;
