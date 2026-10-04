@@ -81,13 +81,53 @@ overwrite the last.
 
 ### Running the Services
 
-To run all services in development mode, use the following command from the root of the repository:
+From the repo root, with the infrastructure already up (see below):
 
 ```bash
 pnpm dev
 ```
 
-This will start all five NestJS applications in watch mode.
+That starts all five services in watch mode, logs interleaved and prefixed with
+the service name. Stop them all with Ctrl-C.
+
+One service at a time, which is easier to read when working on it:
+
+```bash
+pnpm --filter fanout-service dev
+```
+
+| Service | Port | Notes |
+|---|---|---|
+| `identity-service` | 3001 | accounts, organizations, invitations |
+| `session-service` | 3002 | presentations, sessions, participants |
+| `preference-service` | 3003 | accessibility preferences |
+| `fanout-service` | 3004 | WebSocket captions — `apps/fanout-service/README.md` |
+| `presenter-assist-service` | 3005 | scaffold only, deferred post-MVP |
+
+Check one is up with `curl http://localhost:3001/healthz`, and browse its API at
+`http://localhost:3001/api/docs`.
+
+**First run, or after pulling:** each service reads its own `.env`, so copy the
+examples and fill them in, then apply migrations.
+
+```bash
+cp apps/identity-service/.env.example   apps/identity-service/.env
+cp apps/session-service/.env.example    apps/session-service/.env
+cp apps/preference-service/.env.example apps/preference-service/.env
+cp apps/fanout-service/.env.example     apps/fanout-service/.env
+
+pnpm install && pnpm db:generate
+pnpm --filter identity-service   db:deploy
+pnpm --filter session-service    db:deploy
+pnpm --filter preference-service db:deploy
+```
+
+A service exits at startup rather than running half-configured if something
+required is missing: `KAFKA_BROKER` for all four, plus
+`PARTICIPANT_TOKEN_SECRET` for session-service and fanout-service. Remember
+`JWT_SECRET` must be identical across services, and
+`PARTICIPANT_TOKEN_SECRET` identical in session-service and fanout-service but
+different from `JWT_SECRET`.
 
 ### Deploying
 
