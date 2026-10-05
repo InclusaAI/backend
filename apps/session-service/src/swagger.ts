@@ -9,6 +9,15 @@ export function setupSwagger(app: INestApplication): void {
     // Required for the @ApiBearerAuth() decorators on controllers to resolve
     // to a declared security scheme.
     .addBearerAuth()
+    .addBearerAuth(
+      {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT",
+        description: "The participantToken returned by POST /sessions/join.",
+      },
+      "participant",
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, options);

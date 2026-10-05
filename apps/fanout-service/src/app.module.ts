@@ -1,9 +1,11 @@
 import { Module } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
+import { RealtimeModule } from "./realtime/realtime.module";
 
 @Module({
-  imports: [],
+  imports: [ConfigModule.forRoot({ isGlobal: true }), RealtimeModule],
   controllers: [AppController],
   providers: [AppService],
 })

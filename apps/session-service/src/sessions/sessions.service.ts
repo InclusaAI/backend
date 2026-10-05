@@ -11,7 +11,10 @@ import { lastValueFrom } from "rxjs";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateSessionDto } from "./dto/create-session.dto";
 import { JoinSessionDto } from "./dto/join-session.dto";
+import { UpdateParticipantPreferencesDto } from "./dto/update-participant-preferences.dto";
 import { PreferenceClientService } from "./preference-client.service";
+import { ParticipantTokenService } from "./participant-token.service";
+import { ParticipantTokenClaims } from "@inclusaai/shared-types";
 import {
   CommunicationMode,
   Session,
@@ -21,8 +24,11 @@ import { ClientProxy } from "@nestjs/microservices";
 import {
   SESSION_CREATED_EVENT,
   SESSION_ENDED_EVENT,
+  SESSION_PARTICIPANT_UPDATED_EVENT,
+  SESSION_PARTICIPANT_UPDATED_SCHEMA_VERSION,
   SessionCreatedPayload,
   SessionEndedPayload,
+  SessionParticipantUpdatedPayload,
 } from "@inclusaai/kafka-contracts";
 import { KAFKA_SERVICE } from "../kafka/kafka.module";
 import { randomBytes } from "crypto";
@@ -39,6 +45,7 @@ export class SessionsService implements OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly preferenceClient: PreferenceClientService,
+    private readonly participantTokens: ParticipantTokenService,
     @Inject(KAFKA_SERVICE) private readonly kafkaClient: ClientProxy,
   ) {}
 
@@ -127,7 +134,7 @@ export class SessionsService implements OnModuleDestroy {
     joinSessionDto: JoinSessionDto,
     userId?: string,
     bearerToken?: string,
-  ): Promise<SessionParticipant> {
+  ): Promise<SessionParticipant & { participantToken: string }> {
     const session = await this.prisma.session.findUnique({
       where: { joinCode: joinSessionDto.joinCode },
     });
@@ -142,35 +149,80 @@ export class SessionsService implements OnModuleDestroy {
 
     const preferences = await this.preferenceClient.resolveFor(bearerToken);
 
-    // Anonymous: always a new attendee row, since there is no identity to
-    // reconcile against an existing one.
-    if (!userId) {
-      return this.prisma.sessionParticipant.create({
-        data: {
-          sessionId: session.id,
-          displayName: joinSessionDto.displayName ?? null,
-          ...preferences,
-        },
-      });
+    const participant = userId
+      ? // Signed in: re-joining (a dropped connection, a second device)
+        // updates the existing row rather than creating a duplicate attendee.
+        await this.prisma.sessionParticipant.upsert({
+          where: {
+            sessionId_userId: { sessionId: session.id, userId },
+          },
+          create: {
+            sessionId: session.id,
+            userId,
+            displayName: joinSessionDto.displayName ?? null,
+            ...preferences,
+          },
+          update: {
+            leftAt: null,
+            ...preferences,
+          },
+        })
+      : // Anonymous: always a new attendee row, since there is no identity to
+        // reconcile against an existing one.
+        await this.prisma.sessionParticipant.create({
+          data: {
+            sessionId: session.id,
+            displayName: joinSessionDto.displayName ?? null,
+            ...preferences,
+          },
+        });
+
+    this.publishParticipant(participant);
+
+    // The credential for this participant's realtime connection (fanout) and
+    // for changing their own settings in this session.
+    const participantToken = await this.participantTokens.issue({
+      sub: participant.id,
+      sid: participant.sessionId,
+      uid: participant.userId,
+      captionsEnabled: participant.captionsEnabled,
+    });
+
+    return { ...participant, participantToken };
+  }
+
+  /**
+   * Changes the calling participant's settings for this session only. Works
+   * for anonymous participants, who have no durable preferences to change.
+   */
+  async updateOwnPreferences(
+    caller: ParticipantTokenClaims,
+    dto: UpdateParticipantPreferencesDto,
+  ): Promise<SessionParticipant> {
+    const participant = await this.prisma.sessionParticipant.findUnique({
+      where: { id: caller.sub },
+      include: { session: true },
+    });
+
+    // The token names both ids; refuse a mismatch rather than trust either.
+    if (!participant || participant.sessionId !== caller.sid) {
+      throw new NotFoundException("Participant not found.");
     }
 
-    // Signed in: re-joining (a dropped connection, a second device) updates
-    // the existing row rather than creating a duplicate attendee.
-    return this.prisma.sessionParticipant.upsert({
-      where: {
-        sessionId_userId: { sessionId: session.id, userId },
-      },
-      create: {
-        sessionId: session.id,
-        userId,
-        displayName: joinSessionDto.displayName ?? null,
-        ...preferences,
-      },
-      update: {
-        leftAt: null,
-        ...preferences,
+    if (participant.session.status !== "ACTIVE") {
+      throw new ConflictException("That session is not currently active.");
+    }
+
+    const updated = await this.prisma.sessionParticipant.update({
+      where: { id: participant.id },
+      data: {
+        captionsEnabled: dto.captionsEnabled,
+        avatarEnabled: dto.avatarEnabled,
       },
     });
+
+    this.publishParticipant(updated);
+    return updated;
   }
 
   /**
@@ -187,19 +239,32 @@ export class SessionsService implements OnModuleDestroy {
     captionsEnabled: boolean,
     avatarEnabled: boolean,
   ): Promise<number> {
+    const where = {
+      userId,
+      leftAt: null,
+      session: { status: "ACTIVE" },
+    };
+
     const { count } = await this.prisma.sessionParticipant.updateMany({
-      where: {
-        userId,
-        leftAt: null,
-        session: { status: "ACTIVE" },
-      },
+      where,
       data: {
         captionsEnabled,
         avatarEnabled,
       },
     });
 
-    return count;
+    if (count === 0) {
+      return 0;
+    }
+
+    // One event per session the participant is in, so each session's
+    // consumers (fanout, ai-services) see the change.
+    const updated = await this.prisma.sessionParticipant.findMany({ where });
+    for (const participant of updated) {
+      this.publishParticipant(participant);
+    }
+
+    return updated.length;
   }
 
   /**
@@ -266,14 +331,36 @@ export class SessionsService implements OnModuleDestroy {
     return code;
   }
 
+  /** Publishes a participant's current settings for their session. */
+  private publishParticipant(participant: SessionParticipant): void {
+    const payload: SessionParticipantUpdatedPayload = {
+      schemaVersion: SESSION_PARTICIPANT_UPDATED_SCHEMA_VERSION,
+      sessionId: participant.sessionId,
+      participantId: participant.id,
+      userId: participant.userId,
+      displayName: participant.displayName,
+      captionsEnabled: participant.captionsEnabled,
+      avatarEnabled: participant.avatarEnabled,
+      updatedAt: new Date().toISOString(),
+    };
+    this.publish(
+      SESSION_PARTICIPANT_UPDATED_EVENT,
+      payload,
+      participant.sessionId,
+    );
+  }
+
   /**
    * Publishes an event without making the caller wait for Kafka, while keeping
    * it tracked until acknowledged so shutdown can drain it. A failed send is
    * logged: previously it was dropped with no trace at all.
    */
-  private publish(topic: string, payload: unknown): void {
+  private publish(topic: string, payload: unknown, key?: string): void {
+    // A key keeps related events (e.g. one session's) on one partition, and
+    // therefore in order.
+    const message = key === undefined ? payload : { key, value: payload };
     const sent: Promise<unknown> = lastValueFrom(
-      this.kafkaClient.emit(topic, payload),
+      this.kafkaClient.emit(topic, message),
       { defaultValue: undefined },
     )
       .catch((error: Error) =>

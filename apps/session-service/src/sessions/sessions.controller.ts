@@ -1,6 +1,7 @@
 import {
   Controller,
   Post,
+  Patch,
   Body,
   UseGuards,
   Req,
@@ -10,6 +11,11 @@ import {
 import { SessionsService } from "./sessions.service";
 import { CreateSessionDto } from "./dto/create-session.dto";
 import { JoinSessionDto } from "./dto/join-session.dto";
+import { UpdateParticipantPreferencesDto } from "./dto/update-participant-preferences.dto";
+import {
+  ParticipantRequest,
+  ParticipantTokenGuard,
+} from "./participant-token.guard";
 import { JwtAuthGuard, OptionalJwtAuthGuard } from "@inclusaai/shared-auth";
 import {
   ApiTags,
@@ -37,17 +43,40 @@ export class SessionsController {
     description:
       "Open to anonymous participants. If a bearer token is supplied the participant is linked to their account and their saved accessibility preferences are applied.",
   })
-  @ApiResponse({ status: 201, description: "Joined; participant returned." })
+  @ApiResponse({
+    status: 201,
+    description:
+      "Joined. Returns the participant plus `participantToken`: use it to connect to fanout-service and to call PATCH /sessions/participants/me.",
+  })
   @ApiResponse({ status: 404, description: "No session for that join code." })
   @ApiResponse({ status: 409, description: "Session is not active." })
   async join(
     @Body() joinSessionDto: JoinSessionDto,
     @Req() req: Request,
-  ): Promise<SessionParticipant> {
+  ): Promise<SessionParticipant & { participantToken: string }> {
     const userId = (req.user as { userId?: string } | undefined)?.userId;
     const bearerToken = req.headers.authorization?.replace(/^Bearer\s+/i, "");
 
     return this.sessionsService.join(joinSessionDto, userId, bearerToken);
+  }
+
+  @Patch("sessions/participants/me")
+  @ApiBearerAuth("participant")
+  @UseGuards(ParticipantTokenGuard)
+  @ApiOperation({
+    summary: "Change your accessibility settings for this session",
+    description:
+      "Authenticated with the participantToken from POST /sessions/join, not an account token, so anonymous participants can use it. Applies to this session only; signed-in users change their saved preferences through preference-service.",
+  })
+  @ApiResponse({ status: 200, description: "Updated participant returned." })
+  @ApiResponse({ status: 401, description: "Missing or invalid token." })
+  @ApiResponse({ status: 404, description: "Participant not found." })
+  @ApiResponse({ status: 409, description: "Session is not active." })
+  async updateOwnPreferences(
+    @Body() dto: UpdateParticipantPreferencesDto,
+    @Req() req: ParticipantRequest,
+  ): Promise<SessionParticipant> {
+    return this.sessionsService.updateOwnPreferences(req.participant, dto);
   }
 
   @Post("presentations/:id/sessions")

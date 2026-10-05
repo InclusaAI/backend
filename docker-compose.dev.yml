@@ -28,7 +28,10 @@ services:
     image: redis:7-alpine
     container_name: inclusaai-redis
     ports:
-      - '6379:6379'
+      # Host port 6390 for the same reason Postgres uses 5440: a native
+      # redis-server on 6379 competes for the port, and which server you reach
+      # is then non-deterministic. Inside the compose network it is still 6379.
+      - '6390:6379'
     volumes:
       - redis-data:/data
     healthcheck:
@@ -79,9 +82,9 @@ services:
       - kafka
     restart: "no"
     entrypoint: ["/bin/bash", "-c"]
-    # 1 partition matches what auto-creation produced before. Raising it on
-    # accessibility.preference.updated first needs messages keyed by userId,
-    # or updates for one participant can be consumed out of order.
+    # 1 partition each. Every event that needs ordering is keyed (by session or
+    # by user), so partitions can be raised without reordering one key's
+    # messages.
     command:
       - |
         # Bounded, so a broker that never comes up shows as Exited (1) rather
@@ -99,10 +102,22 @@ services:
           session.created \
           session.updated \
           session.ended \
-          accessibility.preference.updated; do
+          session.participant.updated \
+          accessibility.preference.updated \
+          ai.transcript.segment; do
           kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists \
             --topic "$$topic" --partitions 1 --replication-factor 1
         done
+
+        # accessibility.preference.updated is compacted: keyed by userId, it
+        # keeps each participant's latest setting for as long as the topic
+        # lives. There is no API for reading another user's preferences, so
+        # this topic is how a consumer (ai-services) learns the current state
+        # of participants who last changed a setting long ago. Applied with
+        # --alter as well, since --create skips a topic that already exists.
+        kafka-configs --bootstrap-server kafka:9092 --alter \
+          --entity-type topics --entity-name accessibility.preference.updated \
+          --add-config cleanup.policy=compact
         echo "kafka topics ready"
 
 volumes:
