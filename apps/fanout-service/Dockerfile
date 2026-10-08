@@ -1,33 +1,49 @@
 # Stage 1: Build the application
 FROM node:18-alpine AS builder
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
 WORKDIR /usr/src/app
 
-# Copy root package.json and pnpm lockfile
-COPY package.json pnpm-lock.yaml ./
+# Copy workspace files
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
-# Copy application-specific package.json
+# Copy package manifests
 COPY apps/fanout-service/package.json ./apps/fanout-service/
 
-# Install dependencies
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+COPY libs/internal-shared/package.json ./libs/internal-shared/
+COPY libs/kafka-contracts/package.json ./libs/kafka-contracts/
+COPY libs/shared-auth/package.json ./libs/shared-auth/
+COPY libs/shared-types/package.json ./libs/shared-types/
 
-# Copy the rest of the monorepo source code
+# Install dependencies
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
+    pnpm install --frozen-lockfile
+
+# Copy source code
 COPY . .
 
-# Build the application
+# Build fanout service
 RUN pnpm build --filter=fanout-service
 
-# Stage 2: Create the production image
+
+# Stage 2: Production image
 FROM node:18-alpine AS production
+
 WORKDIR /usr/src/app
 
-# Copy production dependencies from the builder stage
+# Copy workspace dependencies
 COPY --from=builder /usr/src/app/node_modules ./node_modules
-COPY --from=builder /usr/src/app/apps/fanout-service/node_modules ./apps/fanout-service/node_modules
-COPY --from=builder /usr/src/app/dist/apps/fanout-service ./dist
 
-# Expose the application port
+# Copy the fanout service
+COPY --from=builder /usr/src/app/apps/fanout-service ./apps/fanout-service
+
+# Copy workspace libraries required at runtime
+COPY --from=builder /usr/src/app/libs ./libs
+
+# Start from the fanout service directory
+WORKDIR /usr/src/app/apps/fanout-service
+
 EXPOSE 3004
 
-# Start the application
 CMD ["node", "dist/main.js"]
