@@ -17,7 +17,7 @@ COPY libs/shared-auth/package.json ./libs/shared-auth/
 COPY libs/shared-types/package.json ./libs/shared-types/
 
 # Install dependencies
-RUN --mount=type=cache,id=16102cad-dc65-47ee-9e06-3bd4368fa325-pnpm,target=/pnpm/store \
+RUN --mount=type=cache,id=s/16102cad-dc65-47ee-9e06-3bd4368fa325-/pnpm/store,target=/pnpm/store \
     pnpm install --frozen-lockfile
 
 # Copy source code
