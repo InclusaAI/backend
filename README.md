@@ -89,6 +89,13 @@ pnpm dev
 
 This will start all five NestJS applications in watch mode.
 
+### Deploying
+
+Each service deploys separately and gets its own domain; there is no single
+entry point and no API gateway. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+for the Railway setup, the environment-variable matrix, and why
+`https://<domain>/api/docs` only ever shows one service's endpoints.
+
 ### Running the Infrastructure
 
 The local development environment requires PostgreSQL, Redis, and Kafka. These services are managed via Docker Compose.
