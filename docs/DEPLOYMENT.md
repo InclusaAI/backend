@@ -58,13 +58,16 @@ Verified against `backend-production-b3f4.up.railway.app`:
 - Redis and Kafka must both be reachable from it, because fanout connects to
   Redis and joins the Kafka consumer group *before* it starts listening. A
   serving socket proves both.
-- It is running the code from `feature/5-fanout-captions`, which suggests
-  `railway up` from a working directory rather than a deploy from a pushed
-  commit. Prefer deploying from git so what runs is a commit you can identify.
+- It is running the merged `main` (PR #12), built from
+  `apps/fanout-service/Dockerfile`.
 
 ## Setting up a service on Railway
 
-One Railway service per app, all four from this same repo.
+One Railway service per app, all four from this same repo. Deploy from git, so
+what runs is a commit you can identify.
+
+Either point the service at a Dockerfile (how fanout runs today, see below) or
+use Railway's own builder with the commands in this table.
 
 **Leave Root Directory at the repository root.** Each app depends on the
 workspace (`libs/*`, the lockfile, `turbo.json`), so an isolated subdirectory
@@ -89,10 +92,27 @@ Fanout has no database, so it needs no pre-deploy command.
 Railway's setting names drift; if one of the above is not there under that
 name, look for the equivalent in the service's settings.
 
-**Do not use the Dockerfiles yet.** All five install pnpm on `node:18-alpine`,
-which does not ship it, and none run `prisma generate`, so a Docker build
-fails. That is a recorded gap. Railway's own builder (Nixpacks) handles pnpm
-from the lockfile, so use the commands above until the Dockerfiles are fixed.
+### Or build from a Dockerfile
+
+`apps/fanout-service/Dockerfile` works and is the template for the rest. What
+makes it work, and what the other four still lack:
+
+- `corepack enable` — `node:18-alpine` ships no pnpm, so the original
+  `RUN pnpm install` failed immediately.
+- Copying the workspace manifests (root `package.json`, the lockfile,
+  `pnpm-workspace.yaml`, and every `libs/*/package.json`) **before** installing,
+  so a code change does not invalidate the dependency layer.
+- `pnpm build --filter=<service>`. No `...` needed: `build` in `turbo.json`
+  depends on `^build`, so the libraries are built first anyway, and on
+  `db:generate`, so `prisma generate` runs for the services that have a schema.
+- Copying `apps/<service>` wholesale into the production stage, which carries
+  the generated Prisma client in `generated/`, then `WORKDIR` into it so
+  `node dist/main.js` resolves.
+
+The other four Dockerfiles are still the original broken pattern: pnpm on
+`node:18-alpine` with no `corepack`. Until they get the same treatment, deploy
+those three services with the build and start commands above, which use
+Railway's own builder and need no Dockerfile.
 
 ## Data stores
 
