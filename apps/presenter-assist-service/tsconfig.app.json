@@ -1,7 +1,7 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "outDir": "../../dist/apps/presenter-assist-service",
+    "outDir": "./dist",
     "baseUrl": "./",
     "paths": {}
   },

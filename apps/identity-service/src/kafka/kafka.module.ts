@@ -1,8 +1,9 @@
-import { Module } from '@nestjs/common';
-import { ClientsModule, Transport } from '@nestjs/microservices';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { Module } from "@nestjs/common";
+import { ClientsModule, Transport } from "@nestjs/microservices";
+import { ConfigModule, ConfigService } from "@nestjs/config";
 
-export const KAFKA_SERVICE = 'KAFKA_SERVICE';
+/** Injection token for this service's Kafka client. */
+export const KAFKA_SERVICE = "KAFKA_SERVICE";
 
 @Module({
   imports: [
@@ -14,12 +15,14 @@ export const KAFKA_SERVICE = 'KAFKA_SERVICE';
           transport: Transport.KAFKA,
           options: {
             client: {
-              clientId: 'identity-service',
-              brokers: configService.get<string>('KAFKA_BROKERS').split(','),
+              clientId: "identity-service",
+              brokers: [configService.getOrThrow<string>("KAFKA_BROKER")],
             },
-            consumer: {
-              groupId: 'identity-service-consumer',
-            },
+            // This client only emit()s events. Without producerOnlyMode,
+            // ClientKafka also starts a consumer group to receive request/reply
+            // responses that never come, and that consumer can still be
+            // reconnecting after the app has closed.
+            producerOnlyMode: true,
           },
         }),
         inject: [ConfigService],

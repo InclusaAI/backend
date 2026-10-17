@@ -1,4 +1,4 @@
-export const INVITATION_CREATED_EVENT = 'identity.invitation.created';
+export const INVITATION_CREATED_EVENT = "identity.invitation.created";
 
 export interface InvitationCreatedPayload {
   invitationId: string;

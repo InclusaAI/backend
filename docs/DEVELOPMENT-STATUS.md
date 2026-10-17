@@ -1,80 +1,270 @@
 # Development Status
 
-This document tracks the implementation status of the InclusaAI backend MVP.
+Implementation status of the InclusaAI platform-backend MVP.
 
-Last Updated: 2026-08-18
+**Last updated:** 2026-09-25
+**Canonical spec:** [`platform-backend-IMPLEMENTATION.md`](../platform-backend-IMPLEMENTATION.md)
 
-## Issue Tracking
+> This is the single source of truth for status. A second `DEVELOPMENT-STATUS.md`
+> previously existed at the repo root with a conflicting issue-numbering scheme;
+> it has been removed. Issue numbers below match the `feature/<n>-*` branches.
+
+## Issue status
 
 | Issue | Service(s) | Feature | Status |
 |---|---|---|---|
-| #1 | `identity-service` | Auth & Org Membership | NOT STARTED |
-| #2 | `session-service` | Presentation & Session Creation | NOT STARTED |
-| #3 | `preference-service` | Accessibility Preference CRUD | NOT STARTED |
-| #4 | `fanout-service` | Caption Fan-Out | NOT STARTED |
-| #5 | `presenter-assist-service` | Presenter Recommendations | DEFERRED |
-| #6 | All | Shared Contract Integration | IN PROGRESS |
+| #1 | all | Monorepo scaffolding (Turborepo + pnpm) | DONE |
+| #2 | `identity-service` | Auth, organizations, invitations | DONE |
+| #3 | `session-service` | Presentations, sessions, join by code | DONE |
+| #4 | `preference-service` | Accessibility preference CRUD | DONE — merge gated on `ai-services` sign-off of the event schema |
+| #5 | `fanout-service` | Caption fan-out over WebSocket | DONE — `ai.transcript.segment` schema pending ai-services confirmation |
+| #6 | `libs/*` | Shared contracts and auth | DONE |
+| #7 | `presenter-assist-service` | Presenter recommendations | DEFERRED (per spec §7) |
 
-## Detailed Status
+## Verification
 
-### Issue #1: Repository Scaffolding
+Run from the repo root.
 
-- **Status:** COMPLETED (with exceptions)
-- **Completed Work:**
-    - Initialized pnpm workspace and Turborepo.
-    - Scaffolded five NestJS applications.
-    - Created `libs/internal-shared`.
-    - Created `docker-compose.dev.yml` for Postgres, Redis, and Kafka.
-    - Created `Dockerfile` for each service.
-    - Configured CI workflows.
-    - Updated `README.md`.
+| Check | Command | Result |
+|---|---|---|
+| Build | `pnpm build` | **PASSING** — 12/12 tasks |
+| Lint | `pnpm lint` | **PASSING** — 9/9 packages, 0 errors |
+| Unit tests | `pnpm test` | **PASSING** — 9 tests |
+| Migrations | `pnpm --filter <svc> db:migrate` | **APPLIED** — one `init` migration per service |
+| E2E tests | `pnpm --filter <svc> test:e2e` | **PASSING** — 34 tests (identity 4, session 12, preference 6, fanout 12) |
+| Fanout load test | `pnpm --filter fanout-service test:load` | **PASSING** — 50 sockets, 2500/2500 delivered, p50 ~30ms |
+| Cross-service flow | manual smoke | **PASSING** — see below |
 
-### Issue #2: Identity and Organization Membership
+The cross-service smoke test exercises the path the realignment exists to support:
+create presentation → start session → join as an authenticated participant →
+`PATCH /preferences` on preference-service → `accessibility.preference.updated`
+over Kafka → session-service's consumer updates that participant's row. Verified
+end to end against live Postgres and Kafka.
 
-- **Status:** DONE
+Issue #4's first acceptance criterion is verified the same way: a participant
+saves a preference, then joins two different sessions, and the saved preference
+is applied on joining each. `preferences.e2e-spec.ts` covers persistence across
+two login sessions and a participant's very first `PATCH` (which previously
+returned 500 because no row existed yet).
 
-### Issue #3: Presentation and Session CRUD
+`presenter-assist-service` is a scaffold with no tests; its `test` script uses
+`--passWithNoTests` so an empty suite is not reported as a failure.
 
-- **Status:** DONE
-- **Summary:** Implemented presentation and session management, including creation, starting, and ending sessions. Added Kafka events for session lifecycle and OpenAPI documentation for all new endpoints.
-- **API Documentation:**
-    - `/presentations`
-    - `/presentations/{id}/sessions`
-    - `/sessions/{id}`
-- **Kafka Events:**
-    - `session.created`
-    - `session.updated`
-    - `session.ended`
-### Issue #6: Shared Package Integration
+The fanout e2e suite runs **two instances sharing one consumer group**, as they
+would in production, so cross-instance delivery and reconnection recovery are
+exercised rather than assumed.
 
-- **Status:** COMPLETED
-- **Tests:** TBD
-- **API Changes:** TBD
+## Architecture
 
----
+### Database isolation (ADR-0003)
 
-## Validation Status
+Each service owns a separate logical database on a shared Postgres instance, with
+its own `prisma/schema.prisma` and its own migration history:
 
-### Lint: PASSING
+| Service | Database | Models |
+|---|---|---|
+| `identity-service` | `synapgrid-identity` | `User`, `Organization`, `OrgMembership`, `Invitation` |
+| `session-service` | `synapgrid-sessions` | `Presentation`, `Session`, `SessionParticipant`, `JoinToken` |
+| `preference-service` | `synapgrid-preferences` | `AccessibilityPreference` |
+| `fanout-service` | none (Redis only) | — |
 
-`pnpm lint` successfully completes across all six workspace packages.
+No cross-service foreign keys exist. `Presentation.ownerId` and
+`Presentation.organizationId` reference identity-service records as plain strings;
+cross-service reads go over REST or Kafka.
 
-### Tests: NOT YET ESTABLISHED
+Each schema generates its client to a service-local `generated/prisma` directory.
+This is required, not stylistic: pnpm dedupes an identical `@prisma/client`
+version across packages into one physical directory, so with the default output
+each service's `prisma generate` silently overwrites the previous service's
+client. Import the client from `src/prisma/client.ts`, never from
+`@prisma/client` directly.
 
-`pnpm test` currently exits with code 1 because several scaffolded services contain no `*.spec.ts` test files. No test assertions are currently failing; Jest is reporting "No tests found". This should not be treated as a functional test failure. Test coverage and test execution will be established as domain features are implemented.
+### Per-participant accessibility
 
-### Docker development infrastructure: PASSING
+`SessionParticipant` carries `captionsEnabled` / `avatarEnabled` per attendee.
+These were previously single booleans on `Session`, which could only describe the
+presenter — two people in the same session could not have different settings.
 
-Docker Desktop and Docker Compose are operational. PostgreSQL, Redis, Kafka, and Zookeeper successfully start through `docker-compose.dev.yml`. PostgreSQL and Redis health checks are passing.
+`userId` is nullable so audience members can join by code without an account.
+Postgres treats NULLs as distinct, so the `(sessionId, userId)` unique constraint
+still permits many anonymous attendees while keeping signed-in attendance
+idempotent across reconnects.
 
-- **Tests:** Health check endpoints.
-- **API Changes:** `GET /healthz` for each service.
-- **Kafka/Event Changes:** None.
-- **Database Changes:** None.
-- **Architectural Decisions:** Using Turborepo as specified in `stack.md`.
-- **Blockers:** None.
-- **Known Limitations:** None.
-- **Blockers:** The shared packages (`@inclusaai/shared-types`, `@inclusaai/shared-auth`, `@inclusaai/kafka-contracts`) are not available in the configured npm registry. The location and access credentials for these packages are required to proceed with the integration.
-- **Next Step:** Obtain access to the shared packages.
+### Caption fan-out (issue #5)
 
----
+Captions reach the participants who asked for them, and nobody else:
+
+```
+ai-services -> ai.transcript.segment -> ONE fanout instance (shared consumer group)
+            -> broadcast to session:{id}:captions -> Redis stream -> every instance -> sockets
+```
+
+- **Filtering is room membership.** Only sockets whose participant enabled
+  captions are in the captions room, so nothing is sent to a client that would
+  have to discard it. A preference change moves that participant's sockets
+  between rooms, wherever those sockets are.
+- **Sockets are authenticated by a participant token**, issued by session-service
+  at join and signed with `PARTICIPANT_TOKEN_SECRET` — deliberately not
+  `JWT_SECRET`, so a participant token cannot act as an account token and an
+  account token cannot open a socket. There is no "join session" socket message,
+  so a client cannot listen to a session it was not admitted to.
+- **Participant settings are materialized in Redis** from
+  `session.participant.updated`, which session-service publishes when someone
+  joins, changes a setting for the session, or has their durable preference
+  applied.
+- **Reconnection** uses socket.io connection state recovery, which replays what
+  the client missed. It requires the Redis *streams* adapter; the classic Redis
+  adapter does not support it.
+- **Anonymous participants** change their own settings for a session through
+  `PATCH /sessions/participants/me`, authenticated by the participant token.
+  Without it, they would default to captions off with no way to turn them on.
+
+### Shared auth and the single-Passport rule
+
+`libs/shared-auth` declares `passport`, `@nestjs/passport`, `@nestjs/common` and
+`@nestjs/config` as **peerDependencies**, not dependencies. Passport keeps its
+registered strategies in module-level state, so if the library resolved its own
+copy while a consuming service resolved another, `JwtStrategy` would register
+into one registry and that service's guards would look in the other — failing at
+runtime with `Unknown authentication strategy "jwt"` while identical-looking
+guards from the library still worked.
+
+This is not hypothetical: `shared-auth` resolved passport 0.6.0 while
+`session-service` resolved 0.7.0, and a guard defined locally in session-service
+silently fell through to the anonymous path for *authenticated* callers. All
+services are pinned to `passport@^0.7.0`.
+
+**Guards that extend `AuthGuard` belong in `libs/shared-auth`**, next to the
+strategy they depend on — not in individual services.
+
+### API gateway
+
+Not used. `Structure.text` describes one, but
+`platform-backend-IMPLEMENTATION.md` — the newer, ADR-backed document — does not,
+and it is authoritative. Each service enables its own CORS via `CORS_ORIGINS`.
+Revisit if frontend integration proves painful.
+
+## Local development
+
+```bash
+docker compose -f docker-compose.dev.yml up -d       # postgres, redis, kafka
+cp apps/<service>/.env.example apps/<service>/.env   # then fill in JWT_SECRET
+pnpm install
+pnpm db:generate
+pnpm --filter identity-service db:migrate            # repeat per service
+pnpm dev
+```
+
+**Postgres is published on host port 5440**, not 5432. Native Postgres installs
+commonly occupy 5432 and 5433; two servers competing for a port makes which one
+you reach non-deterministic, and the failure surfaces confusingly as an
+authentication error. Inside the compose network it is still 5432.
+
+**Redis is published on host port 6390**, not 6379, for the same reason. This
+one is worth knowing because it fails quietly: with two Redis servers in play,
+fanout-service instances can end up on different ones and behave as if each were
+alone, so cross-instance delivery and reconnection recovery simply stop working.
+
+`JWT_SECRET` must be **identical** across every service that verifies tokens;
+only `identity-service` issues them.
+
+If you have a `postgres-data` volume from before the per-service split, the init
+script that creates the three databases will not re-run — recreate the volume
+with `docker compose -f docker-compose.dev.yml down -v`.
+
+| Service | Port | Docs |
+|---|---|---|
+| `identity-service` | 3001 | `/api/docs`, `/api/openapi.json` |
+| `session-service` | 3002 | `/api/docs`, `/api/openapi.json` |
+| `preference-service` | 3003 | `/api/docs`, `/api/openapi.json` |
+| `fanout-service` | 3004 | `/api/docs`, `/api/openapi.json`, WebSocket — see `apps/fanout-service/README.md` |
+| `presenter-assist-service` | 3005 | scaffold |
+
+API documentation is Swagger UI (`@nestjs/swagger`). An earlier revision of this
+document described it as Scalar; that was inaccurate.
+
+## Kafka events
+
+| Event | Producer | Consumer |
+|---|---|---|
+| `identity.invitation.created` | `identity-service` | *(none yet)* |
+| `session.created` | `session-service` | *(none yet)* |
+| `session.ended` | `session-service` | `fanout-service` |
+| `session.participant.updated` | `session-service` | `fanout-service` |
+| `accessibility.preference.updated` | `preference-service` | `session-service` |
+| `ai.transcript.segment` | `ai-services` *(not built yet)* | `fanout-service` |
+
+Event consumers use `@EventPattern`, not `@MessagePattern` — on the Kafka
+transport the latter implies request/reply and waits on a response topic.
+
+Topics are provisioned by the one-shot `kafka-init` container in
+`docker-compose.dev.yml` (1 partition each); add new contract topics there.
+
+**Message keys and ordering.** Events are keyed — by `sessionId` for session and
+participant events, by `userId` for preferences — so one session's or one
+participant's events stay in order even with several partitions. Each event also
+carries a `schemaVersion` and a timestamp, so a consumer can tell formats apart
+and ignore an update older than the state it holds.
+
+**`accessibility.preference.updated` is compacted.** Keyed by `userId`, the topic
+retains each participant's latest setting indefinitely, so a consumer reading
+from the beginning learns the current state of everyone, however long ago they
+set it. This matters because there is no API for reading another user's
+preferences: the topic is the only source. (Decided with the `ai-services`
+questions on issue #4.)
+
+**Naming.** Events this repo publishes are camelCase. `ai.transcript.segment` is
+snake_case, deliberately: it is the one event published by a Python service, and
+it matches the convention on that side.
+
+**Speaker names.** `ai.transcript.segment` identifies a speaker by participant id
+only — display names live in session-service and never reach ai-services.
+`session.participant.updated` carries `displayName`, and fanout-service attaches
+the name when it relays a caption.
+Producers run in `producerOnlyMode` (none of them uses request/reply) and publish
+fire-and-forget, but each service tracks in-flight events and drains them on
+shutdown before disconnecting, so a deploy does not drop events mid-send. A
+failed publish is logged as `Failed to publish <topic>` and is **not retried**.
+
+## Known gaps
+
+Carried forward deliberately; none block the checks above.
+
+- **Fanout reconnection covers about two minutes**, and no more than
+  `FANOUT_STREAM_MAXLEN` entries of shared broadcast history. Beyond that a
+  client reconnects fresh and the captions it missed are gone. A backlog
+  endpoint would remove the limit.
+- **Fanout relays captions only.** Avatar and gesture fan-out are deferred; the
+  issue asks for that deferral to be confirmed with ai-services and web-apps.
+- **`ai.transcript.segment` has no agreed schema.** The one in
+  `libs/kafka-contracts` is this repo's proposal, since no contract existed and
+  ai-services' spec says schemas live here.
+- **Dockerfiles are broken.** All five run `pnpm install` on `node:18-alpine`,
+  which ships no pnpm and has no `corepack enable`; none run `prisma generate`;
+  and the spec calls for Node 20+.
+- **CI is misconfigured.** `.github/workflows/ci.yml` references the org
+  `inclusaai-infra`; the actual org is `InclusaAI`. It also provisions no
+  Postgres or Kafka services, so e2e tests could not run there.
+- **Quality bar (spec §8) is largely unmet.** No Prometheus metrics, no
+  OpenTelemetry, no config-schema validation. `/healthz` returns a static string
+  rather than checking database, Kafka, or Redis connectivity. Graceful shutdown
+  *is* wired (`enableShutdownHooks`, plus draining in-flight Kafka events).
+- **Event delivery is at-most-once.** Events are published after the database
+  write with no outbox, so an event is lost (and logged) if Kafka is unavailable
+  at that moment. Reviewed and accepted for MVP; revisit afterwards. A
+  transactional outbox is the fix, at the cost of a table, a worker, and
+  consumers having to tolerate duplicates. Note the compacted preferences topic
+  limits the damage: a fresh consumer still learns everyone's current settings.
+- **The fanout load test does not gate on p95.** On a developer machine the tail
+  measures host contention, not the service (p50 held at ~30ms while p95 ranged
+  75–900ms, and was as wide with 10 sockets as with 50). Delivery and p50 are
+  gated; set `LOAD_MAX_P95_MS` to enforce the tail on a quiet runner.
+- **E2E tests do not assert that events are published.** They pass with Kafka
+  down; publication is currently verified only by the manual smoke test.
+- **`accessibility.preference.updated` is published without a message key**, so
+  per-participant ordering holds only while the topic has a single partition.
+  Pending the `ai-services` schema review (issue #4).
+- **No organization-membership check** when creating a presentation
+  (`presentations.service.ts`) — the owning organization is taken on trust from
+  the request body.
+- Root `tsconfig.json` sets `strictNullChecks: false` and `noImplicitAny: false`.

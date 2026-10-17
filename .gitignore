@@ -1,1 +1,33 @@
-node_modules
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Turborepo
+.turbo/
+
+# Prisma generated clients (one per service, see each schema.prisma)
+generated/
+
+# Test output
+coverage/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

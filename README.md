@@ -18,14 +18,30 @@ We use Turborepo for its high-performance build system and its seamless integrat
     -   `fanout-service`: Handles real-time data fan-out to clients.
     -   `presenter-assist-service`: Provides real-time assistance to presenters.
 -   `libs/`: Contains shared libraries used across the monorepo.
+    -   `shared-auth`: The JWT Passport strategy and guard used by every service that verifies tokens.
+    -   `kafka-contracts`: Event topic names and payload types shared by producers and consumers.
+    -   `shared-types`: Cross-service domain types.
     -   `internal-shared`: A private, non-published library for sharing code only within this repository.
 -   `docs/`: Contains project documentation, including the `DEVELOPMENT-STATUS.md` file.
+
+### Database Isolation
+
+Per ADR-0003, each service owns a **separate logical database** on a shared
+Postgres instance, with its own `prisma/schema.prisma` and migration history.
+There are no cross-service foreign keys — cross-service references are plain
+string IDs, and cross-service reads go over REST or Kafka.
+
+Each schema generates its Prisma client into a service-local `generated/prisma`
+directory, and services import it from `src/prisma/client.ts`. **Do not import
+`@prisma/client` directly:** pnpm dedupes that package across the workspace, so
+every service would share one generated client and each `prisma generate` would
+overwrite the last.
 
 ## Local Development
 
 ### Prerequisites
 
--   [Node.js](https://nodejs.org/) (v18 or higher)
+-   [Node.js](https://nodejs.org/) (v20 or higher)
 -   [pnpm](https://pnpm.io/) (v8.6.0 or higher)
 -   [Docker](https://www.docker.com/) and [Docker Compose](https://docs.docker.com/compose/)
 
@@ -36,16 +52,89 @@ We use Turborepo for its high-performance build system and its seamless integrat
     ```bash
     pnpm install
     ```
+3.  Start the infrastructure (see below), then configure and migrate each service:
+    ```bash
+    cp apps/<service>/.env.example apps/<service>/.env   # then set JWT_SECRET
+    pnpm db:generate
+    pnpm --filter identity-service   db:migrate
+    pnpm --filter session-service    db:migrate
+    pnpm --filter preference-service db:migrate
+    ```
+
+    `JWT_SECRET` must be **identical** across every service that verifies tokens;
+    only `identity-service` issues them. Generate one with
+    `openssl rand -base64 48`.
+
+    **Postgres is published on host port 5440**, not 5432 — native Postgres
+    installs commonly hold 5432 and 5433, and two servers competing for a port
+    makes which one you reach non-deterministic (the failure looks like a wrong
+    password). Inside the compose network it is still 5432.
+
+    **Redis is published on host port 6390**, not 6379, for the same reason: a
+    native `redis-server` on 6379 makes which server you reach non-deterministic,
+    and fanout-service then silently behaves as if its instances were isolated.
+    Inside the compose network it is still 6379.
+
+    If you have a `postgres-data` volume predating the per-service split, the
+    init script creating the three databases will not re-run — recreate it with
+    `docker compose -f docker-compose.dev.yml down -v`.
 
 ### Running the Services
 
-To run all services in development mode, use the following command from the root of the repository:
+From the repo root, with the infrastructure already up (see below):
 
 ```bash
 pnpm dev
 ```
 
-This will start all five NestJS applications in watch mode.
+That starts all five services in watch mode, logs interleaved and prefixed with
+the service name. Stop them all with Ctrl-C.
+
+One service at a time, which is easier to read when working on it:
+
+```bash
+pnpm --filter fanout-service dev
+```
+
+| Service | Port | Notes |
+|---|---|---|
+| `identity-service` | 3001 | accounts, organizations, invitations |
+| `session-service` | 3002 | presentations, sessions, participants |
+| `preference-service` | 3003 | accessibility preferences |
+| `fanout-service` | 3004 | WebSocket captions — `apps/fanout-service/README.md` |
+| `presenter-assist-service` | 3005 | scaffold only, deferred post-MVP |
+
+Check one is up with `curl http://localhost:3001/healthz`, and browse its API at
+`http://localhost:3001/api/docs`.
+
+**First run, or after pulling:** each service reads its own `.env`, so copy the
+examples and fill them in, then apply migrations.
+
+```bash
+cp apps/identity-service/.env.example   apps/identity-service/.env
+cp apps/session-service/.env.example    apps/session-service/.env
+cp apps/preference-service/.env.example apps/preference-service/.env
+cp apps/fanout-service/.env.example     apps/fanout-service/.env
+
+pnpm install && pnpm db:generate
+pnpm --filter identity-service   db:deploy
+pnpm --filter session-service    db:deploy
+pnpm --filter preference-service db:deploy
+```
+
+A service exits at startup rather than running half-configured if something
+required is missing: `KAFKA_BROKER` for all four, plus
+`PARTICIPANT_TOKEN_SECRET` for session-service and fanout-service. Remember
+`JWT_SECRET` must be identical across services, and
+`PARTICIPANT_TOKEN_SECRET` identical in session-service and fanout-service but
+different from `JWT_SECRET`.
+
+### Deploying
+
+Each service deploys separately and gets its own domain; there is no single
+entry point and no API gateway. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+for the Railway setup, the environment-variable matrix, and why
+`https://<domain>/api/docs` only ever shows one service's endpoints.
 
 ### Running the Infrastructure
 
@@ -56,6 +145,12 @@ To start the infrastructure:
 ```bash
 docker-compose -f docker-compose.dev.yml up -d
 ```
+
+This also runs `kafka-init`, a one-shot container that creates every topic in
+`libs/kafka-contracts` and then exits (`Exited (0)` in `docker ps -a` is
+expected). **When you add a topic to the contracts, add it to `kafka-init` in
+`docker-compose.dev.yml` too**; otherwise the broker auto-creates it on first
+publish, and that first publish waits out a leader election.
 
 To stop the infrastructure:
 
@@ -73,7 +168,12 @@ curl http://localhost:3001/healthz
 
 ## Continuous Integration
 
-Our CI pipeline is defined in `.github/workflows/ci.yml` and uses reusable workflows from the `inclusaai-infra` repository. The pipeline validates the following for each application on every push and pull request:
+> **Known issue:** the workflow currently resolves `inclusaai-infra` as the GitHub
+> *organization*, but the org is `InclusaAI`, so the reusable workflow cannot be
+> found. It also provisions no Postgres or Kafka services, so e2e tests could not
+> run there. See "Known gaps" in [`docs/DEVELOPMENT-STATUS.md`](docs/DEVELOPMENT-STATUS.md).
+
+Our CI pipeline is defined in `.github/workflows/ci.yml` and uses reusable workflows from the `inclusaai-infra` repository. The pipeline is intended to validate the following for each application on every push and pull request:
 
 -   Linting
 -   Tests

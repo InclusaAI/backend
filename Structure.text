@@ -1,3 +1,19 @@
+SUPERSEDED — kept for historical reference only.
+====================================================================
+This was an early sketch. It does not describe the current repo:
+
+  - It lists an `api-gateway` service. There is none, and none is
+    planned for the MVP; each service enables its own CORS.
+  - It puts shared code in `packages/`. It lives in `libs/`.
+  - It shows a single root `prisma/` directory. Each service owns its
+    own schema and migration history (ADR-0003).
+  - `config/`, `logger/` and `observability/` packages do not exist.
+
+The authoritative documents are:
+  - platform-backend-IMPLEMENTATION.md  (architecture and contracts)
+  - docs/DEVELOPMENT-STATUS.md          (what is actually built)
+====================================================================
+
 platform-backend/
 │
 ├── apps/

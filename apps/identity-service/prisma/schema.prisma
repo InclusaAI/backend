@@ -1,8 +1,18 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// identity-service — owns users, organizations, org memberships and invitations.
+//
+// Per ADR-0003 this service has its own logical database. It must not define
+// models owned by another service; cross-service references are plain string
+// IDs with no foreign key, and cross-service reads go over REST/gRPC/Kafka.
+//
+// Accessibility preferences are owned by preference-service.
 
+// Generated into this service so it is never overwritten by a sibling
+// service's `prisma generate`. pnpm dedupes an identical @prisma/client
+// version across packages into one physical directory, so the default
+// output location is shared and each generate clobbers the last.
 generator client {
   provider = "prisma-client-js"
+  output   = "../generated/prisma"
 }
 
 datasource db {
@@ -31,6 +41,7 @@ model Organization {
   updatedAt DateTime @updatedAt
 
   memberships OrgMembership[]
+  invitations Invitation[]
 
   @@map("organizations")
 }
@@ -39,7 +50,7 @@ model OrgMembership {
   id             String       @id @default(cuid())
   organizationId String
   userId         String
-  role           String       @default("MEMBER") // e.g., ADMIN, MEMBER
+  role           String       @default("MEMBER") // ADMIN, MEMBER
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id])
@@ -54,7 +65,7 @@ model Invitation {
   email          String
   token          String       @unique
   expiresAt      DateTime
-  status         String       @default("PENDING") // e.g., PENDING, ACCEPTED, EXPIRED
+  status         String       @default("PENDING") // PENDING, ACCEPTED, EXPIRED
   organizationId String
   inviterId      String
   createdAt      DateTime     @default(now())
