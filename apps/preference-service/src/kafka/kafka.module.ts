@@ -1,24 +1,24 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config';
 import { ClientProxyFactory, Transport } from '@nestjs/microservices';
+import { kafkaClientConfig } from '@inclusaai/kafka-contracts';
 
 @Module({
   imports: [ConfigModule],
   providers: [
     {
       provide: 'KAFKA_SERVICE',
-      useFactory: (configService: ConfigService) => {
+      useFactory: () => {
         return ClientProxyFactory.create({
           transport: Transport.KAFKA,
           options: {
             client: {
               clientId: 'preference-service',
-              brokers: [configService.get<string>('KAFKA_BROKER')],
+              ...kafkaClientConfig(),
             },
           },
         });
       },
-      inject: [ConfigService],
     },
   ],
   exports: ['KAFKA_SERVICE'],

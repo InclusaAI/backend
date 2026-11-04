@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config';
 import { ClientsModule, Transport } from '@nestjs/microservices';
+import { kafkaClientConfig } from '@inclusaai/kafka-contracts';
 
 @Module({
   imports: [
@@ -9,35 +10,33 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
       {
         name: 'KAFKA_CONSUMER',
         imports: [ConfigModule],
-        useFactory: (configService: ConfigService) => ({
+        useFactory: () => ({
           transport: Transport.KAFKA,
           options: {
             client: {
               clientId: 'presenter-assist-service',
-              brokers: [configService.get<string>('KAFKA_BROKER')],
+              ...kafkaClientConfig(),
             },
             consumer: {
               groupId: 'presenter-assist-consumer',
             },
           },
         }),
-        inject: [ConfigService],
       },
     ]),
     ClientsModule.registerAsync([
       {
         name: 'KAFKA_PRODUCER',
         imports: [ConfigModule],
-        useFactory: (configService: ConfigService) => ({
+        useFactory: () => ({
           transport: Transport.KAFKA,
           options: {
             client: {
               clientId: 'presenter-assist-producer',
-              brokers: [configService.get<string>('KAFKA_BROKER')],
+              ...kafkaClientConfig(),
             },
           },
         }),
-        inject: [ConfigService],
       },
     ]),
   ],

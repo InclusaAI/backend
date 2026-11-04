@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { Logger, ValidationPipe } from "@nestjs/common";
 import { Transport } from "@nestjs/microservices";
 import helmet from "helmet";
+import { kafkaClientConfig } from "@inclusaai/kafka-contracts";
 import { AppModule } from "./app.module";
 import { setupSwagger } from "./swagger";
 
@@ -39,7 +40,7 @@ async function bootstrap() {
     options: {
       client: {
         clientId: "session-service",
-        brokers: [config.getOrThrow<string>("KAFKA_BROKER")],
+        ...kafkaClientConfig(),
       },
       consumer: {
         groupId: "session-service-consumer",

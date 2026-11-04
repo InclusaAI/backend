@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
-import { ConfigModule, ConfigService } from "@nestjs/config";
+import { ConfigModule } from "@nestjs/config";
 import { ClientProxyFactory, Transport } from "@nestjs/microservices";
+import { kafkaClientConfig } from "@inclusaai/kafka-contracts";
 
 /** Injection token for this service's Kafka client. */
 export const KAFKA_SERVICE = "KAFKA_SERVICE";
@@ -10,13 +11,13 @@ export const KAFKA_SERVICE = "KAFKA_SERVICE";
   providers: [
     {
       provide: KAFKA_SERVICE,
-      useFactory: (configService: ConfigService) => {
+      useFactory: () => {
         return ClientProxyFactory.create({
           transport: Transport.KAFKA,
           options: {
             client: {
               clientId: "session-service",
-              brokers: [configService.getOrThrow<string>("KAFKA_BROKER")],
+              ...kafkaClientConfig(),
             },
             // This client only emit()s events. Without producerOnlyMode,
             // ClientKafka also starts a consumer group to receive request/reply
@@ -28,7 +29,6 @@ export const KAFKA_SERVICE = "KAFKA_SERVICE";
           },
         });
       },
-      inject: [ConfigService],
     },
   ],
   exports: [KAFKA_SERVICE],

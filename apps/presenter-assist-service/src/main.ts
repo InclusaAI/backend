@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { setupSwagger } from './swagger';
 import { Transport, MicroserviceOptions } from '@nestjs/microservices';
 import { ConfigService } from '@nestjs/config';
+import { kafkaClientConfig } from '@inclusaai/kafka-contracts';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -14,7 +15,7 @@ async function bootstrap() {
     options: {
       client: {
         clientId: 'presenter-assist-service',
-        brokers: [configService.get<string>('KAFKA_BROKER')],
+        ...kafkaClientConfig(),
       },
       consumer: {
         groupId: 'presenter-assist-consumer',

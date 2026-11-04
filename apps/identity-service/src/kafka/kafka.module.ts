@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ClientsModule, Transport } from "@nestjs/microservices";
-import { ConfigModule, ConfigService } from "@nestjs/config";
+import { ConfigModule } from "@nestjs/config";
+import { kafkaClientConfig } from "@inclusaai/kafka-contracts";
 
 /** Injection token for this service's Kafka client. */
 export const KAFKA_SERVICE = "KAFKA_SERVICE";
@@ -11,12 +12,15 @@ export const KAFKA_SERVICE = "KAFKA_SERVICE";
       {
         name: KAFKA_SERVICE,
         imports: [ConfigModule],
-        useFactory: (configService: ConfigService) => ({
+        useFactory: () => ({
           transport: Transport.KAFKA,
           options: {
+            // Brokers, TLS and SASL come from the environment; see
+            // kafkaClientConfig. Throws if no broker is configured, so the
+            // service fails at boot rather than never connecting.
             client: {
               clientId: "identity-service",
-              brokers: [configService.getOrThrow<string>("KAFKA_BROKER")],
+              ...kafkaClientConfig(),
             },
             // This client only emit()s events. Without producerOnlyMode,
             // ClientKafka also starts a consumer group to receive request/reply
@@ -25,7 +29,6 @@ export const KAFKA_SERVICE = "KAFKA_SERVICE";
             producerOnlyMode: true,
           },
         }),
-        inject: [ConfigService],
       },
     ]),
   ],
