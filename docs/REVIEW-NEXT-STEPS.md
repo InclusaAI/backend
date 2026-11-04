@@ -177,11 +177,14 @@ is documented as a client responsibility. Right now neither is written down.
 ## 4. Deployment
 
 `render.yaml` + [RENDER.md](RENDER.md) describe four web services (identity,
-session, preference, fanout), one Key Value instance, three Postgres instances
-(one per service that owns data — a Blueprint cannot add logical databases to an
-existing instance), and a shared `backend-shared` env group carrying the Aiven
-broker settings. Migrations run as `preDeployCommand`, each service naming its
-own schema so one deploy cannot apply three services' migrations to one database.
+session, preference, fanout), one Key Value instance, one Postgres instance
+shared by the three services that own data (the free plan allows only one), and
+a shared `backend-shared` env group carrying the Aiven broker settings. Because
+free web services have no `preDeployCommand`, migrations run from the image
+entrypoint (`docker/entrypoint.sh` → `prisma migrate deploy`), each service
+applying only its own `migrations/` directory. `db push` is not used: it would
+sync the shared database to one service's schema and drop the other services'
+tables.
 
 Not verified from here: the Docker images themselves (no Docker available), so
 the first Blueprint apply is also the first image build. Watch that first build;

@@ -21,7 +21,9 @@ COPY libs/kafka-contracts/package.json ./libs/kafka-contracts/
 COPY libs/shared-auth/package.json ./libs/shared-auth/
 COPY libs/shared-types/package.json ./libs/shared-types/
 
-RUN pnpm install --frozen-lockfile
+# --prod=false keeps devDependencies (turbo, @nestjs/cli) available for the
+# build even if NODE_ENV is set to production in the build environment.
+RUN pnpm install --frozen-lockfile --prod=false
 
 COPY . .
 
@@ -40,6 +42,14 @@ COPY --from=builder /usr/src/app/package.json ./package.json
 COPY --from=builder /usr/src/app/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY --from=builder /usr/src/app/libs ./libs
 COPY --from=builder /usr/src/app/apps/presenter-assist-service ./apps/presenter-assist-service
+
+# Render's free plan has no pre-deploy command, so the entrypoint applies any
+# Prisma migrations before starting the process (this scaffold has none yet).
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN tr -d '\r' < /usr/local/bin/entrypoint.sh > /tmp/entrypoint.sh \
+    && mv /tmp/entrypoint.sh /usr/local/bin/entrypoint.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 WORKDIR /usr/src/app/apps/presenter-assist-service
 

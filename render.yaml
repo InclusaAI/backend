@@ -2,14 +2,34 @@
 #
 # Deploy: Render Dashboard → New → Blueprint → point at this repo/branch.
 #
+# Pinned to the FREE compute plan for the initial deployment. The tradeoffs:
+#   - All four web services share 750 free instance-hours per month and spin
+#     down after 15 minutes idle (~1 min cold start; WebSocket clients drop and
+#     the Kafka consumers disconnect until the next request wakes them).
+#   - Free services cannot RECEIVE private-network traffic, so session-service
+#     calls preference-service over its public URL instead of hostport.
+#   - Free web services do NOT support `preDeployCommand`, so migrations run
+#     from the image entrypoint (docker/entrypoint.sh) before the process
+#     starts. That works on both free and paid plans.
+#   - Render's free Postgres expires 30 days after creation, so the database is
+#     an external Neon Postgres instead of a Render-managed one. All three
+#     database services share that single database. Each service still runs its
+#     own `prisma migrate deploy` against its own migrations directory; the
+#     additive init migrations coexist in the shared `_prisma_migrations`
+#     table. Do NOT use `db push` here: it would drop the other services'
+#     tables.
+# Going paid: change the plans below and, if you give each service its own
+# database, point DATABASE_URL at it. Migrations stay in the entrypoint.
+#
 # What you get:
 #   identity-service    accounts, orgs, invitations. Issues the account token.
 #   session-service     presentations, sessions, participants, participant tokens
 #   preference-service  per-participant accessibility settings (participant token)
 #   fanout-service      live captions over WebSocket (Redis + Kafka, no database)
 #   inclusaai-redis     fanout's participant state and socket.io adapter
-#   three Postgres      one per service that has a database (ADR-0003: no shared
-#                       database, no cross-service foreign keys)
+#   Neon Postgres       one shared database for identity/session/preference
+#                       (ADR-0003 wants one per service: do that once paid,
+#                       because no shared database and no cross-service FKs)
 #
 # What Render does NOT provide, and this file therefore does not invent:
 #   - Kafka. The broker is the Aiven instance ai-services already uses, so both
@@ -29,19 +49,16 @@ services:
     runtime: docker
     dockerfilePath: ./apps/identity-service/Dockerfile
     dockerContext: .
-    plan: 0.5c-512mb
+    plan: free
     healthCheckPath: /healthz
-    # Runs from the repo root, in the built image. `--schema` is what keeps this
-    # service's migration from also running session- and preference-service's:
-    # the workspace-wide `pnpm db:deploy` would apply all three to one database.
-    # Prisma is a root devDependency, so its binary is in the copied node_modules.
-    preDeployCommand: npx --no-install prisma migrate deploy --schema apps/identity-service/prisma/schema.prisma
+    # No preDeployCommand: Render does not offer one on free web services.
+    # The container entrypoint runs `prisma migrate deploy` before the app
+    # starts (docker/entrypoint.sh), so the schema is ready either way.
     envVars:
       - fromGroup: backend-shared
-      - key: DATABASE_URL
-        fromDatabase:
-          name: identity-db
-          property: connectionString
+      # DATABASE_URL lives in its own group so it is prompted once at
+      # blueprint creation and shared by every Prisma service.
+      - fromGroup: backend-database
 
   # ---------------------------------------------------------------------------
   # session-service — issues participant tokens, tracks the live roster
@@ -51,23 +68,25 @@ services:
     runtime: docker
     dockerfilePath: ./apps/session-service/Dockerfile
     dockerContext: .
-    plan: 0.5c-512mb
+    plan: free
     healthCheckPath: /healthz
-    preDeployCommand: npx --no-install prisma migrate deploy --schema apps/session-service/prisma/schema.prisma
     envVars:
       - fromGroup: backend-shared
-      - key: DATABASE_URL
-        fromDatabase:
-          name: sessions-db
-          property: connectionString
-      # Private-network address of preference-service, which Render assigns at
-      # deploy time. session-service reads PREFERENCE_SERVICE_HOST when
-      # PREFERENCE_SERVICE_URL is not set.
-      - key: PREFERENCE_SERVICE_HOST
+      # DATABASE_URL lives in its own group so it is prompted once at
+      # blueprint creation and shared by every Prisma service.
+      - fromGroup: backend-database
+      # Free services cannot receive private-network traffic, so on the free
+      # plan this is preference-service's public URL. `RENDER_EXTERNAL_URL` is
+      # Render's built-in `https://<service>.onrender.com` value; `property:
+      # url` is not a valid Blueprint property and fails validation.
+      # Once preference-service is on a paid plan, switch to
+      # PREFERENCE_SERVICE_HOST with `property: hostport` (session-service
+      # already understands both forms).
+      - key: PREFERENCE_SERVICE_URL
         fromService:
           name: preference-service
           type: web
-          property: hostport
+          envVarKey: RENDER_EXTERNAL_URL
 
   # ---------------------------------------------------------------------------
   # preference-service — per-participant accessibility settings
@@ -77,15 +96,13 @@ services:
     runtime: docker
     dockerfilePath: ./apps/preference-service/Dockerfile
     dockerContext: .
-    plan: 0.5c-512mb
+    plan: free
     healthCheckPath: /healthz
-    preDeployCommand: npx --no-install prisma migrate deploy --schema apps/preference-service/prisma/schema.prisma
     envVars:
       - fromGroup: backend-shared
-      - key: DATABASE_URL
-        fromDatabase:
-          name: preferences-db
-          property: connectionString
+      # DATABASE_URL lives in its own group so it is prompted once at
+      # blueprint creation and shared by every Prisma service.
+      - fromGroup: backend-database
 
   # ---------------------------------------------------------------------------
   # fanout-service — WebSocket captions. No database.
@@ -95,7 +112,7 @@ services:
     runtime: docker
     dockerfilePath: ./apps/fanout-service/Dockerfile
     dockerContext: .
-    plan: 0.5c-512mb
+    plan: free
     healthCheckPath: /healthz
     envVars:
       - fromGroup: backend-shared
@@ -104,41 +121,41 @@ services:
           name: inclusaai-redis
           type: keyvalue
           property: connectionString
+      # The free Key Value plan has only 25 MB. The stream holds every
+      # socket.io broadcast (captions included), so cap it well below that:
+      # 10k entries is a few MB and still covers far more than the 2-minute
+      # reconnection window at MVP traffic. Raise it on a paid Key Value plan.
       - key: FANOUT_STREAM_MAXLEN
-        value: "100000"
+        value: "10000"
 
   # ---------------------------------------------------------------------------
   # Key Value (Redis) — fanout only: participant state plus the socket.io
   # streams adapter that makes several instances behave as one and enables
   # reconnection.
   # ---------------------------------------------------------------------------
+  # Only one free Key Value per workspace, which is all this needs. Free
+  # instances are in-memory only (25 MB max): participant state and the
+  # socket.io adapter data are lost on every restart or spin-down, which is why
+  # FANOUT_STREAM_MAXLEN above is sized for the small free instance.
   - type: keyvalue
     name: inclusaai-redis
-    plan: 256mb
+    plan: free
     maxmemoryPolicy: noeviction
     ipAllowList: [] # internal (private-network) connections only
 
-databases:
-  # Per ADR-0003 each service owns its own database. Separate instances rather
-  # than three logical databases on one instance, because a Blueprint cannot
-  # create additional logical databases on a Render Postgres — and because a
-  # shared instance would let one service's migration touch another's tables.
-  # Drop to `plan: free` while evaluating; free instances are deleted after
-  # 30 days of inactivity, so they are not a staging setup.
-  - name: identity-db
-    plan: 0.1c-256mb
-    postgresMajorVersion: "16"
-    databaseName: synapgrid-identity
-
-  - name: sessions-db
-    plan: 0.1c-256mb
-    postgresMajorVersion: "16"
-    databaseName: synapgrid-sessions
-
-  - name: preferences-db
-    plan: 0.1c-256mb
-    postgresMajorVersion: "16"
-    databaseName: synapgrid-preferences
+# No `databases:` block on purpose.
+# Render's free Postgres expires 30 days after creation, so the database is an
+# external Neon Postgres instead (see the backend-database group below). Per
+# ADR-0003 each service should own its own database; the free deployment shares
+# one because Neon's free tier is a single database. Migrations still run per
+# service with `prisma migrate deploy` from the image entrypoint, each applying
+# only its own migrations/ folder, so the additive init migrations coexist in
+# the shared `_prisma_migrations` table. `db push` must NOT be used: it syncs
+# the whole database to one service's schema and would drop the others' tables.
+# On paid plans, create one database per service (identity-db, sessions-db,
+# preferences-db / synapgrid-identity, synapgrid-sessions,
+# synapgrid-preferences) and point each service's DATABASE_URL at it. No other
+# change is needed.
 
 envVarGroups:
   - name: backend-shared
@@ -182,4 +199,25 @@ envVarGroups:
       # Comma-separated frontend origins. Without the real domains browsers are
       # blocked even though curl works.
       - key: CORS_ORIGINS
+        sync: false
+
+  # ---------------------------------------------------------------------------
+  # Shared database credentials. Separate from backend-shared because only the
+  # three Prisma services read them.
+  # ---------------------------------------------------------------------------
+  - name: backend-database
+    envVars:
+      # Paste Neon's DIRECT connection string, not the "-pooler" one, and point
+      # it at a database that belongs to this app:
+      #   postgresql://<user>:<password>@ep-xxx.<region>.aws.neon.tech/inclusaai?sslmode=require
+      # Do NOT reuse a database that already has tables: `prisma migrate deploy`
+      # refuses a non-empty schema (error P3005) to avoid clobbering data. Neon's
+      # default `neondb` usually already holds other apps' tables, so create a
+      # dedicated database first (console: Databases -> New Database).
+      # The entrypoint runs `prisma migrate deploy` over this same URL, and
+      # Prisma Migrate holds a session-level advisory lock that PgBouncer
+      # (Neon's pooled endpoint) cannot guarantee across transactions. If you
+      # want pooling later, keep this direct URL as `directUrl` in each Prisma
+      # schema and give the runtime a separate pooled URL with `?pgbouncer=true`.
+      - key: DATABASE_URL
         sync: false

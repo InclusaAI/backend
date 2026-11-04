@@ -6,28 +6,38 @@ boundary); this file is the part that differs per host: the blueprint, the exact
 settings, and what Render does not provide.
 
 Everything here is encoded in [`render.yaml`](../render.yaml) at the repo root,
-which creates all four services plus the datastores in one go. Read this before
-you click, because two values are not in the file and cannot be: the Kafka
-password and the frontend origins.
+which creates all four services and the Key Value instance in one go. The
+database is **not** created by Render: the free Postgres expires after 30 days,
+so it is an external Neon Postgres that you paste in at blueprint creation. That
+plus the Kafka password and the frontend origins are the values not in the file.
 
 ## What the blueprint creates
 
 | Resource | Render type | Plan | Notes |
 |---|---|---|---|
-| `identity-service` | Web Service (Docker) | `0.5c-512mb` | port from `PORT`, healthcheck `/healthz`, pre-deploy `prisma migrate deploy` |
-| `session-service` | Web Service (Docker) | `0.5c-512mb` | as above |
-| `preference-service` | Web Service (Docker) | `0.5c-512mb` | as above |
-| `fanout-service` | Web Service (Docker) | `0.5c-512mb` | Redis + Kafka, no database, no pre-deploy command |
-| `identity-db`, `sessions-db`, `preferences-db` | Render Postgres | `0.1c-256mb`, PG 16 | one instance per service, `synapgrid-*` database names |
-| `inclusaai-redis` | Key Value | `256mb`, `noeviction` | fanout-service only |
+| `identity-service` | Web Service (Docker) | `free` | port from `PORT`, healthcheck `/healthz`, migrations at container start |
+| `session-service` | Web Service (Docker) | `free` | as above |
+| `preference-service` | Web Service (Docker) | `free` | as above |
+| `fanout-service` | Web Service (Docker) | `free` | Redis + Kafka, no database |
+| `inclusaai-redis` | Key Value | `free` (25 MB), `noeviction` | fanout-service only |
 
 `presenter-assist-service` is a deferred scaffold and is not deployed.
 
+The database is a **Neon Postgres** project you create yourself (free tier, no
+expiry), wired in through the `backend-database` env group. Render's own free
+Postgres is deliberately not used: it is deleted 30 days after creation. Use
+Neon's **direct** connection string — the host *without* `-pooler` — because
+`docker/entrypoint.sh` runs `prisma migrate deploy` over the same URL and
+Prisma Migrate needs a session-level advisory lock, which PgBouncer (Neon's
+pooled endpoint) cannot guarantee across transactions.
+
 No `region` is set, so every resource lands in Render's default (`oregon`).
-Services reach each other, Postgres and Redis over Render's private network only
-when they are in the **same region**, so change `region` everywhere or nowhere —
-and prefer whichever region is nearest your Aiven Kafka service, because every
-service holds a Kafka connection.
+Keep every resource in the **same region**: a free web service can open a
+private-network connection to Render data stores in its region, but it cannot
+_receive_ private traffic. That is why `session-service` reaches
+`preference-service` over its public URL rather than `hostport`. Also prefer the
+region nearest your Aiven Kafka service, because every service holds a Kafka
+connection.
 
 ## Before you deploy
 
@@ -90,14 +100,22 @@ and paste your own — if you need to control the values or rotate them.
 
 1. Push this branch to GitHub.
 2. Render Dashboard → **New → +** → **Blueprint** → select the repository.
-3. Render previews the resources and asks for the values marked `sync: false`,
-   both on the `backend-shared` group:
-   - `CORS_ORIGINS` — your frontend origin(s), comma-separated
-     (`https://app.example.com`). Without the real origin, browsers are blocked
-     even though `curl` works.
-   - `KAFKA_PASSWORD` — the Aiven service password.
-4. Confirm. Render creates the three Postgres instances and the Key Value
-   instance and deploys all four services.
+3. Render previews the resources and asks for the values marked `sync: false`:
+   - `DATABASE_URL` (group `backend-database`) — Neon's direct connection
+     string for a database dedicated to this app, e.g.
+     `postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/inclusaai?sslmode=require`.
+     Copy it from the Neon console with **Connection pooling off**; the
+     `-pooler` host is not supported (see above). The database must be empty:
+     `prisma migrate deploy` refuses a schema that already has tables (P3005),
+     and Neon's default `neondb` often already holds another app's tables.
+     Create `inclusaai` (or similar) under **Databases → New Database** first.
+   - `CORS_ORIGINS` (group `backend-shared`) — your frontend origin(s),
+     comma-separated (`https://app.example.com`). Without the real origin,
+     browsers are blocked even though `curl` works.
+   - `KAFKA_PASSWORD` (group `backend-shared`) — the Aiven service password.
+4. Confirm. Render creates the Key Value instance and deploys all four
+   services. The three Prisma services apply their migrations against Neon at
+   container start.
 
 `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_SECURITY_PROTOCOL` (`SASL_SSL`),
 `KAFKA_SASL_MECHANISM` (`plain`), `KAFKA_USERNAME` (`avnadmin`) and
@@ -105,44 +123,71 @@ and paste your own — if you need to control the values or rotate them.
 Switch any of them to `sync: false`, or point the group at another broker, if
 you run more than one environment.
 
-### Why three Postgres instances
+### Why one shared database
 
-Per ADR-0003 each service owns its own database, and a Blueprint cannot create
-additional logical databases on an existing Render Postgres — one `databases:`
-entry is one instance. Three `0.1c-256mb` instances is therefore the automatable
-shape; `pnpm dev` locally still uses one compose instance with three logical
-databases (`docker/postgres/init-databases.sql`).
+Per ADR-0003 each service owns its own database. The free deployment shares one
+Neon database across the three Prisma services because Neon's free tier is a
+single database per project (and Render's free Postgres expires in 30 days, so
+it is not an option at all). On paid plans, create one database per service.
 
-If the cost of three instances matters more than the automation, create one
-instance in the Blueprint, `CREATE DATABASE "synapgrid-sessions";` and
-`"synapgrid-preferences";` on it from the dashboard's PSQL console, and hand-edit
-the two services' `DATABASE_URL` to the instance's **Internal Database URL** with
-the database name swapped. Do not point all three services at one database:
-nothing enforces the boundary at runtime, so the mistake stays invisible until
-two services' migrations collide.
+This still runs each service's own migration history:
+
+```
+docker/entrypoint.sh   # in every image
+  prisma migrate deploy --schema prisma/schema.prisma
+```
+
+Each service applies only the migrations in its own `apps/<service>/prisma/migrations`
+folder. The three init migrations are additive and touch different tables, so
+they coexist in the shared `_prisma_migrations` table. Do **not** switch this to
+`prisma db push`: it syncs the entire database to one service's schema and
+drops the other services' tables.
+
+For a proper ADR-0003 setup (separate databases), create one Neon database per
+service — `identity-db`, `sessions-db`, `preferences-db` with database names
+`synapgrid-identity`, `synapgrid-sessions`, `synapgrid-preferences` — and point
+each service's `DATABASE_URL` at its own. Nothing else changes; migrations stay
+in the entrypoint.
 
 ### Migrations
 
-Each HTTP service runs its own migration as `preDeployCommand`, inside the built
-image and from the repo root:
+Free web services do **not** support Render's `preDeployCommand`, so migrations
+run inside the container before the app starts:
 
 ```
-npx --no-install prisma migrate deploy --schema apps/identity-service/prisma/schema.prisma
+docker/entrypoint.sh
+  └─ /usr/src/app/node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma
 ```
 
-`--schema` is the important part. The obvious `pnpm run db:deploy` is a
-workspace-wide `turbo db:deploy`, which would run all three services' migrations
-against whichever single `DATABASE_URL` that service has — a deploy that
-half-succeeds and then fails on the first conflicting table. `npx --no-install`
-also avoids depending on pnpm at pre-deploy time: the runtime stage of every
-Dockerfile copies the repository's `node_modules`, which is where the Prisma
-CLI lives.
+The script only runs when the image contains a Prisma schema, so
+`fanout-service` skips it. Prisma is a root dependency, so its CLI is in the
+copied `node_modules`. A failed migration exits non-zero and prevents the new
+instance from becoming healthy, which keeps the previous deploy live.
+
+Because three services boot independently, two of them may run `migrate deploy`
+at the same moment. That is safe: Prisma takes a Postgres advisory lock and the
+second waits, which is also the reason the URL must be a direct connection
+rather than PgBouncer.
+
+### Neon notes
+
+- Use the **direct** host. The `-pooler` host is PgBouncer in transaction mode;
+  Prisma Migrate's session-level advisory lock is not reliable there, and Prisma
+  needs `?pgbouncer=true` to avoid prepared-statement errors at runtime.
+- `sslmode=require` encrypts but does not verify the server certificate. Use
+  `sslmode=verify-full` if you want full verification; both work with Neon.
+- Neon's free compute suspends after a few minutes of inactivity. Combined with
+  Render's own spin-down, expect a slow first request after idle; that is
+  normal, not a healthcheck failure.
+- `prisma migrate deploy` fails with **P3005 / "schema is not empty"** if the
+  database already contains any table. Give the services their own empty
+  database rather than reusing one that another project writes to.
 
 ## Environment variable matrix
 
 | Variable | identity | session | preference | fanout | Source |
 |---|---|---|---|---|---|
-| `DATABASE_URL` | ✅ | ✅ | ✅ | — | per-service Postgres instance |
+| `DATABASE_URL` | ✅ | ✅ | ✅ | — | `backend-database` group — your Neon direct URL |
 | `REDIS_URL` | — | — | — | ✅ | Key Value internal URL |
 | `JWT_SECRET` | ✅ issues | ✅ verifies | — | — | `backend-shared` group, generated once |
 | `PARTICIPANT_TOKEN_SECRET` | — | ✅ issues | ✅ verifies | ✅ verifies | `backend-shared` group, generated once |
@@ -152,9 +197,16 @@ CLI lives.
 | `KAFKA_SASL_MECHANISM` | ✅ | ✅ | ✅ | ✅ | `plain` |
 | `KAFKA_USERNAME` / `KAFKA_PASSWORD` | ✅ | ✅ | ✅ | ✅ | Aiven service user |
 | `KAFKA_CA_CERT` | ✅ | ✅ | ✅ | ✅ | path inside the image |
-| `PREFERENCE_SERVICE_HOST` | — | ✅ | — | — | referenced from preference-service |
-| `FANOUT_STREAM_MAXLEN` | — | — | — | ✅ | `render.yaml` |
+| `PREFERENCE_SERVICE_URL` | — | ✅ | — | — | preference-service's public `RENDER_EXTERNAL_URL` (free plan) |
+| `FANOUT_STREAM_MAXLEN` | — | — | — | ✅ | `render.yaml` (sized for the 25 MB free Key Value) |
 | `PORT` | ✅ | ✅ | ✅ | ✅ | Render sets it; every service reads it |
+
+`PREFERENCE_SERVICE_URL` is wired with `fromService: { name: preference-service,
+envVarKey: RENDER_EXTERNAL_URL }`, which resolves to that service's public
+`https://…onrender.com` origin. If the Blueprint rejects a cross-service
+`envVarKey`, set the same key to `sync: false` and paste the URL in the dashboard
+instead — session-service accepts either the full URL or `PREFERENCE_SERVICE_HOST`
++ port.
 
 Kafka settings are read by `kafkaClientConfig()` in
 [`libs/kafka-contracts/src/kafka-connection.ts`](../libs/kafka-contracts/src/kafka-connection.ts),
@@ -178,6 +230,11 @@ so existing `.env` files keep working.
   when you need it.
 - Reconnection recovery depends on that same Redis instance; if Key Value is
   unreachable, fanout-service exits at boot rather than running without it.
+- The free Key Value instance is only **25 MB** and is in-memory only. The
+  blueprint sets `FANOUT_STREAM_MAXLEN=10000` so the event stream cannot fill
+  it; raise that value (and the Key Value plan) if you need a longer recovery
+  window or high caption volume. Free web services also spin down after 15
+  minutes without traffic, which drops all WebSocket connections.
 
 ## Verifying a deployment
 
@@ -228,13 +285,15 @@ lockfile, `turbo.json`). The pattern that works, now applied to all five:
 - `apk add --no-cache openssl` for the services with Prisma, whose query engine
   links against OpenSSL.
 - `certs/` is copied so `KAFKA_CA_CERT` has a file to read.
+- `docker/entrypoint.sh` runs `prisma migrate deploy` for the database-backed
+  images before exec'ing the CMD. This replaces Render's `preDeployCommand`,
+  which free web services do not support.
 - `.dockerignore` keeps the host's `node_modules` out of the context — a Windows
   `node_modules` would replace the Linux one and break native modules like
   bcrypt.
 
-Migrations run as `preDeployCommand` inside the built image, so a deploy fails
-before serving traffic if a migration fails — see "Migrations" above for the
-exact command and why it names one schema.
+Migrations run before the app starts, so a deploy fails before serving traffic
+if a migration fails.
 
 ## Gaps to know about before this is production-ready
 

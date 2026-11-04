@@ -20,7 +20,9 @@ COPY libs/kafka-contracts/package.json ./libs/kafka-contracts/
 COPY libs/shared-auth/package.json ./libs/shared-auth/
 COPY libs/shared-types/package.json ./libs/shared-types/
 
-RUN pnpm install --frozen-lockfile
+# --prod=false keeps devDependencies (turbo, @nestjs/cli) available for the
+# build even if NODE_ENV is set to production in the build environment.
+RUN pnpm install --frozen-lockfile --prod=false
 
 COPY . .
 
@@ -41,6 +43,14 @@ COPY --from=builder /usr/src/app/package.json ./package.json
 COPY --from=builder /usr/src/app/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY --from=builder /usr/src/app/libs ./libs
 COPY --from=builder /usr/src/app/apps/fanout-service ./apps/fanout-service
+
+# No database in this image, so the entrypoint skips migrations and just
+# execs the CMD. Kept for every service so the startup path is identical.
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN tr -d '\r' < /usr/local/bin/entrypoint.sh > /tmp/entrypoint.sh \
+    && mv /tmp/entrypoint.sh /usr/local/bin/entrypoint.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 WORKDIR /usr/src/app/apps/fanout-service
 
