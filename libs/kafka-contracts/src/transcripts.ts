@@ -32,8 +32,13 @@ export interface TranscriptSegmentPayload {
    */
   segment_id: string;
 
-  /** Increases monotonically within a session; lets clients order segments. */
-  sequence: number;
+  /**
+   * Increases monotonically within a session; lets clients order segments.
+   * Optional: asr-service does not send one today, so a consumer must fall
+   * back to `start_ms` ordering. Requested from ai-services; kept optional here
+   * so a payload without it is not treated as malformed.
+   */
+  sequence?: number;
 
   text: string;
 
@@ -45,8 +50,13 @@ export interface TranscriptSegmentPayload {
    * audio. Display names live in session-service, so ai-services is not
    * expected to resolve one: fanout-service attaches the name before sending a
    * caption to clients. Absent when the speaker is unknown.
+   *
+   * `speaker_id` is the field asr-service actually publishes (it mirrors
+   * `media.session.<id>.audio.chunk`, where media-control sets `speaker_id` to
+   * the participant identity). Consumers must accept either name.
    */
   speaker_participant_id?: string;
+  speaker_id?: string;
 
   /** BCP 47 language tag, e.g. "en-US". */
   language?: string;

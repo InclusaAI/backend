@@ -226,45 +226,41 @@ export class SessionsService implements OnModuleDestroy {
   }
 
   /**
-   * Applies a participant's updated accessibility preferences to every session
-   * they are currently attending.
+   * Applies a participant's stored accessibility preference to their row in
+   * the one session it was stored for.
    *
-   * Scoped to `SessionParticipant`, not `Session`: `Session.userId` is the
-   * presenter who started the session, so matching on it would apply an
-   * audience member's preference to the wrong person's session — or, far more
-   * often, to nothing at all.
+   * `accessibility.preference.updated` is session-and-participant scoped (that
+   * is the shape ai-services validates), so this updates exactly one
+   * `SessionParticipant` — the id the participant token and every media event
+   * already use. Scoping by `userId` instead would miss anonymous attendees
+   * (no user id at all) and cannot express "captions on in this session".
+   *
+   * Returns null when there is nobody to update: a preference saved before a
+   * participant joined, or after they left, is not an error.
    */
   async updateAccessibilityPreferences(
-    userId: string,
-    captionsEnabled: boolean,
-    avatarEnabled: boolean,
-  ): Promise<number> {
-    const where = {
-      userId,
-      leftAt: null,
-      session: { status: "ACTIVE" },
-    };
+    sessionId: string,
+    participantId: string,
+    channels: string[],
+  ): Promise<SessionParticipant | null> {
+    const participant = await this.prisma.sessionParticipant.findUnique({
+      where: { id: participantId },
+    });
 
-    const { count } = await this.prisma.sessionParticipant.updateMany({
-      where,
+    if (!participant || participant.sessionId !== sessionId) {
+      return null;
+    }
+
+    const updated = await this.prisma.sessionParticipant.update({
+      where: { id: participant.id },
       data: {
-        captionsEnabled,
-        avatarEnabled,
+        captionsEnabled: channels.includes("captions"),
+        avatarEnabled: channels.includes("avatar"),
       },
     });
 
-    if (count === 0) {
-      return 0;
-    }
-
-    // One event per session the participant is in, so each session's
-    // consumers (fanout, ai-services) see the change.
-    const updated = await this.prisma.sessionParticipant.findMany({ where });
-    for (const participant of updated) {
-      this.publishParticipant(participant);
-    }
-
-    return updated.length;
+    this.publishParticipant(updated);
+    return updated;
   }
 
   /**

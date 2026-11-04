@@ -1,54 +1,79 @@
-import { Controller, Get, Post, Delete, Body, Param, Query } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
-import { PreferencesService } from './preferences.service';
-import { CreatePreferenceDto } from './dto/create-preference.dto';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Post,
+  Req,
+  UseGuards,
+} from "@nestjs/common";
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from "@nestjs/swagger";
+import { PreferencesService } from "./preferences.service";
+import { CreatePreferenceDto } from "./dto/create-preference.dto";
+import {
+  ParticipantRequest,
+  ParticipantTokenGuard,
+} from "../auth/participant-token.guard";
 
-@ApiTags('Preferences')
-@Controller('api/preferences')
+/**
+ * A participant's accessibility settings for the session they joined.
+ *
+ * Every endpoint is authenticated by the `participantToken` that
+ * `POST /sessions/join` returns, and the session and participant ids come from
+ * that token rather than the request. An anonymous attendee has no account to
+ * authenticate with, and a client must not be able to read or change someone
+ * else's settings.
+ */
+@ApiTags("Preferences")
+@ApiBearerAuth("participant")
+@UseGuards(ParticipantTokenGuard)
+@Controller("preferences")
 export class PreferencesController {
   constructor(private readonly preferencesService: PreferencesService) {}
 
   @Post()
   @ApiOperation({
-    summary: 'Create or update accessibility preferences',
+    summary: "Set your accessibility preferences for this session",
     description:
-      'Sets the accessibility channels a participant needs for a session. ' +
-      'Publishes accessibility.preference.updated to Kafka for ai-services preference-aware gating.',
+      "Sets the accessibility channels this participant needs. Publishes accessibility.preference.updated to Kafka for ai-services preference-aware gating.",
   })
-  @ApiResponse({ status: 201, description: 'Preferences created/updated successfully.' })
-  async upsertPreference(@Body() dto: CreatePreferenceDto) {
-    return this.preferencesService.upsertPreference(dto);
-  }
-
-  @Get(':sessionId/:participantId')
-  @ApiOperation({ summary: 'Get preferences for a participant in a session' })
-  @ApiParam({ name: 'sessionId', description: 'Session ID' })
-  @ApiParam({ name: 'participantId', description: 'Participant ID' })
-  @ApiResponse({ status: 200, description: 'Preferences returned (empty defaults if none set).' })
-  async getPreference(
-    @Param('sessionId') sessionId: string,
-    @Param('participantId') participantId: string,
+  @ApiResponse({ status: 201, description: "Preferences created/updated." })
+  @ApiResponse({ status: 401, description: "Missing or invalid token." })
+  async upsertPreference(
+    @Body() dto: CreatePreferenceDto,
+    @Req() req: ParticipantRequest,
   ) {
-    return this.preferencesService.getPreference(sessionId, participantId);
+    return this.preferencesService.upsertPreference(
+      req.participant.sid,
+      req.participant.sub,
+      dto,
+    );
   }
 
-  @Get(':sessionId')
-  @ApiOperation({ summary: 'Get all preferences for a session' })
-  @ApiParam({ name: 'sessionId', description: 'Session ID' })
-  @ApiResponse({ status: 200, description: 'List of participant preferences.' })
-  async getSessionPreferences(@Param('sessionId') sessionId: string) {
-    return this.preferencesService.getSessionPreferences(sessionId);
+  @Get()
+  @ApiOperation({ summary: "Get your preferences for this session" })
+  @ApiResponse({ status: 200, description: "Preferences, or the defaults." })
+  @ApiResponse({ status: 401, description: "Missing or invalid token." })
+  async getPreference(@Req() req: ParticipantRequest) {
+    return this.preferencesService.getPreference(
+      req.participant.sid,
+      req.participant.sub,
+    );
   }
 
-  @Delete(':sessionId/:participantId')
-  @ApiOperation({ summary: 'Remove preferences for a participant' })
-  @ApiParam({ name: 'sessionId', description: 'Session ID' })
-  @ApiParam({ name: 'participantId', description: 'Participant ID' })
-  @ApiResponse({ status: 200, description: 'Preferences deleted.' })
-  async deletePreference(
-    @Param('sessionId') sessionId: string,
-    @Param('participantId') participantId: string,
-  ) {
-    return this.preferencesService.deletePreference(sessionId, participantId);
+  @Delete()
+  @ApiOperation({ summary: "Remove your preferences for this session" })
+  @ApiResponse({ status: 200, description: "Preferences deleted." })
+  @ApiResponse({ status: 401, description: "Missing or invalid token." })
+  async deletePreference(@Req() req: ParticipantRequest) {
+    return this.preferencesService.deletePreference(
+      req.participant.sid,
+      req.participant.sub,
+    );
   }
 }

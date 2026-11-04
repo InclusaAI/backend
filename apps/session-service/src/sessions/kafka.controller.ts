@@ -22,14 +22,31 @@ export class KafkaController {
   async handleAccessibilityPreferenceUpdated(
     @Payload() message: AccessibilityPreferenceUpdatedPayload,
   ): Promise<void> {
+    // The event is snake_case and participant-scoped, because ai-services
+    // validates it against the same contract. A payload without both ids
+    // cannot be applied to anyone, so it is dropped rather than guessed at.
+    if (!message?.session_id || !message?.participant_id) {
+      this.logger.warn(
+        "Discarded an accessibility preference event with no session or participant",
+      );
+      return;
+    }
+
     const updated = await this.sessionsService.updateAccessibilityPreferences(
-      message.userId,
-      message.captionsEnabled,
-      message.avatarEnabled,
+      message.session_id,
+      message.participant_id,
+      message.channels ?? [],
     );
 
+    if (!updated) {
+      this.logger.debug(
+        `No participant ${message.participant_id} in session ${message.session_id}; preference stored for a later join`,
+      );
+      return;
+    }
+
     this.logger.log(
-      `Applied accessibility preferences for user ${message.userId} to ${updated} active session participant(s)`,
+      `Applied accessibility preferences to participant ${updated.id} in session ${updated.sessionId} (captions: ${updated.captionsEnabled}, avatar: ${updated.avatarEnabled})`,
     );
   }
 }

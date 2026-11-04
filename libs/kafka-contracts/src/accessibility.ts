@@ -1,16 +1,16 @@
 /**
  * @file Defines the contract for the accessibility.preference.updated event.
+ *
+ * This is the ONLY definition of this event. An earlier revision also declared
+ * it in `sessions.ts`, with a different (account-scoped) shape, so which one a
+ * service saw depended on export order. The participant-scoped shape below is
+ * canonical because it is what `ai-services` consumes — it is validated against
+ * `inclusaai_contracts.events.AccessibilityPreferenceUpdated` on that side, and
+ * a payload with different field names fails validation there instead of
+ * gating any work.
  */
 
-/**
- * The topic name for the event published when a user's accessibility preferences are updated.
- *
- * The topic is **compacted** and messages are **keyed by `userId`**, so it
- * doubles as the current setting for every participant: a consumer starting
- * from the beginning learns everyone's latest state, however long ago they set
- * it. There is no API for reading another user's preferences, so this is the
- * only way for another service to obtain them.
- */
+/** The topic ai-services reads to decide which outputs a participant needs. */
 export const ACCESSIBILITY_PREFERENCE_UPDATED_EVENT =
   "accessibility.preference.updated";
 
@@ -18,38 +18,52 @@ export const ACCESSIBILITY_PREFERENCE_UPDATED_EVENT =
 export const ACCESSIBILITY_PREFERENCE_UPDATED_SCHEMA_VERSION = 1;
 
 /**
- * The payload for the ACCESSIBILITY_PREFERENCE_UPDATED_EVENT.
- * It contains the complete state of the user's MVP accessibility preferences.
+ * Accessibility channels a participant may need.
+ * Matches inclusaai_contracts.events.AccessibilityChannel.
+ */
+export type AccessibilityChannel =
+  | "captions"
+  | "avatar"
+  | "gestures"
+  | "translation"
+  | "tts";
+
+/**
+ * The payload for ACCESSIBILITY_PREFERENCE_UPDATED_EVENT.
+ *
+ * It contains the complete state of one participant's preferences for one
+ * session, so a consumer can gate work without asking for anything else.
  */
 export interface AccessibilityPreferenceUpdatedPayload {
   /**
-   * Which shape this message follows, so a consumer can tell the formats apart
-   * rather than inferring from which fields happen to be present. Bump it when
-   * a field's meaning changes or one is removed; adding an optional field does
-   * not need a bump.
+   * The session-service session the participant is in. ai-services gates
+   * pipeline work per session, so this is not optional.
    */
-  schemaVersion: number;
+  session_id: string;
 
   /**
-   * The unique identifier of the user whose preference has changed.
-   * This is the persistent ID from the User model in identity-service.
+   * The session-service SessionParticipant id — the same id the participant
+   * token carries as `sub`, and the id `media.session.*` events use as
+   * `speaker_id`.
    */
-  userId: string;
+  participant_id: string;
+
+  /** Every channel this participant wants generated for them. */
+  channels: AccessibilityChannel[];
+
+  /** BCP 47 language tag for captions, when the participant chose one. */
+  caption_language?: string | null;
+
+  /** BCP 47 language tag for translated output, when requested. */
+  translation_target_language?: string | null;
+
+  /** ASL only for the MVP (ADR-0002). */
+  sign_language?: string;
 
   /**
-   * The new state of the captions preference for the user.
+   * When the preference was stored, in epoch milliseconds, like the rest of
+   * the snake_case events. A consumer holding a newer value should ignore this
+   * message: on redelivery an older state can arrive after a newer one.
    */
-  captionsEnabled: boolean;
-
-  /**
-   * The new state of the avatar preference for the user.
-   */
-  avatarEnabled: boolean;
-
-  /**
-   * When the preference was stored, ISO-8601 from the owning row rather than
-   * publish time. A consumer holding a newer value should ignore this message:
-   * on redelivery or a retry, an older state can arrive after a newer one.
-   */
-  updatedAt: string;
+  updated_at_ms: number;
 }

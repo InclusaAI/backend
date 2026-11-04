@@ -19,29 +19,42 @@ export interface SessionEndedPayload {
   endedAt: string;
 }
 
-// ---------------------------------------------------------------------------
-// Accessibility preference events
-// ---------------------------------------------------------------------------
+export const SESSION_PARTICIPANT_UPDATED_EVENT =
+  "session.participant.updated";
 
-export const ACCESSIBILITY_PREFERENCE_UPDATED_EVENT = 'accessibility.preference.updated';
-
-/**
- * Accessibility channels a participant may need.
- * Matches inclusaai_contracts.events.AccessibilityChannel
- */
-export type AccessibilityChannel = 'captions' | 'avatar' | 'gestures' | 'translation' | 'tts';
+/** Current shape of SessionParticipantUpdatedPayload. */
+export const SESSION_PARTICIPANT_UPDATED_SCHEMA_VERSION = 1;
 
 /**
- * Published when a participant updates their accessibility preferences.
- * Consumed by ai-services for preference-aware gating.
- * Contract: inclusaai_contracts.events.AccessibilityPreferenceUpdated
+ * A participant's accessibility settings as they apply in one session.
+ *
+ * Published by session-service, keyed by sessionId, whenever a participant
+ * joins, changes a setting for the session, or has their durable preference
+ * (accessibility.preference.updated) applied. Always the full current state.
+ *
+ * Consumed by fanout-service to decide which sockets receive captions. Also
+ * proposed to ai-services for per-session pipeline gating (issue #4).
  */
-export interface AccessibilityPreferenceUpdatedPayload {
-  session_id: string;
-  participant_id: string;
-  channels: AccessibilityChannel[];
-  caption_language?: string | null;
-  translation_target_language?: string | null;
-  sign_language?: string;  // default: 'ASL' (ADR-0002)
-  updated_at_ms: number;
+export interface SessionParticipantUpdatedPayload {
+  /** Which shape this message follows; see the note on the other events. */
+  schemaVersion: number;
+
+  sessionId: string;
+  participantId: string;
+
+  /** null for an anonymous participant who joined by code. */
+  userId: string | null;
+
+  /**
+   * What the participant is called, as they gave it when joining. Carried here
+   * so a consumer can label a speaker without querying session-service:
+   * ai.transcript.segment identifies a speaker by participant id only.
+   */
+  displayName: string | null;
+
+  captionsEnabled: boolean;
+  avatarEnabled: boolean;
+
+  /** ISO-8601. Consumers ignore an update older than the one they hold. */
+  updatedAt: string;
 }

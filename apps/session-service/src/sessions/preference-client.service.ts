@@ -31,15 +31,33 @@ export class PreferenceClientService {
     private readonly config: ConfigService,
   ) {}
 
+  /**
+   * `PREFERENCE_SERVICE_URL` is the local setting. Platforms that give each
+   * service a deploy-time private-network hostname cannot know it in advance,
+   * so they inject `PREFERENCE_SERVICE_HOST` instead (Render: something like
+   * `preference-service-abc1:10000`). Either form works with or without a
+   * scheme; localhost is the last resort so development keeps working.
+   */
+  private preferenceBaseUrl(): string {
+    const url = this.config.get<string>("PREFERENCE_SERVICE_URL");
+    if (url) return url;
+
+    const host = this.config.get<string>("PREFERENCE_SERVICE_HOST");
+    if (host) {
+      return host.startsWith("http://") || host.startsWith("https://")
+        ? host
+        : `http://${host}`;
+    }
+
+    return "http://localhost:3003";
+  }
+
   async resolveFor(bearerToken?: string): Promise<ResolvedPreferences> {
     if (!bearerToken) {
       return PreferenceClientService.DEFAULTS;
     }
 
-    const baseUrl = this.config.get<string>(
-      "PREFERENCE_SERVICE_URL",
-      "http://localhost:3003",
-    );
+    const baseUrl = this.preferenceBaseUrl();
 
     try {
       const response = await firstValueFrom(
