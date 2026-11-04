@@ -1,0 +1,185 @@
+# Render Blueprint for the InclusaAI platform backend.
+#
+# Deploy: Render Dashboard → New → Blueprint → point at this repo/branch.
+#
+# What you get:
+#   identity-service    accounts, orgs, invitations. Issues the account token.
+#   session-service     presentations, sessions, participants, participant tokens
+#   preference-service  per-participant accessibility settings (participant token)
+#   fanout-service      live captions over WebSocket (Redis + Kafka, no database)
+#   inclusaai-redis     fanout's participant state and socket.io adapter
+#   three Postgres      one per service that has a database (ADR-0003: no shared
+#                       database, no cross-service foreign keys)
+#
+# What Render does NOT provide, and this file therefore does not invent:
+#   - Kafka. The broker is the Aiven instance ai-services already uses, so both
+#     repos share one event bus. Only the password is `sync: false` — set it in
+#     the dashboard at creation (see docs/RENDER.md).
+#   - presenter-assist-service, which is a post-MVP scaffold with no endpoints.
+#
+# Every service builds from its own Dockerfile with the repository root as
+# context, because each app resolves the pnpm workspace in libs/*.
+
+services:
+  # ---------------------------------------------------------------------------
+  # identity-service — issues the JWT every other service verifies
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: identity-service
+    runtime: docker
+    dockerfilePath: ./apps/identity-service/Dockerfile
+    dockerContext: .
+    plan: 0.5c-512mb
+    healthCheckPath: /healthz
+    # Runs from the repo root, in the built image. `--schema` is what keeps this
+    # service's migration from also running session- and preference-service's:
+    # the workspace-wide `pnpm db:deploy` would apply all three to one database.
+    # Prisma is a root devDependency, so its binary is in the copied node_modules.
+    preDeployCommand: npx --no-install prisma migrate deploy --schema apps/identity-service/prisma/schema.prisma
+    envVars:
+      - fromGroup: backend-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: identity-db
+          property: connectionString
+
+  # ---------------------------------------------------------------------------
+  # session-service — issues participant tokens, tracks the live roster
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: session-service
+    runtime: docker
+    dockerfilePath: ./apps/session-service/Dockerfile
+    dockerContext: .
+    plan: 0.5c-512mb
+    healthCheckPath: /healthz
+    preDeployCommand: npx --no-install prisma migrate deploy --schema apps/session-service/prisma/schema.prisma
+    envVars:
+      - fromGroup: backend-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sessions-db
+          property: connectionString
+      # Private-network address of preference-service, which Render assigns at
+      # deploy time. session-service reads PREFERENCE_SERVICE_HOST when
+      # PREFERENCE_SERVICE_URL is not set.
+      - key: PREFERENCE_SERVICE_HOST
+        fromService:
+          name: preference-service
+          type: web
+          property: hostport
+
+  # ---------------------------------------------------------------------------
+  # preference-service — per-participant accessibility settings
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: preference-service
+    runtime: docker
+    dockerfilePath: ./apps/preference-service/Dockerfile
+    dockerContext: .
+    plan: 0.5c-512mb
+    healthCheckPath: /healthz
+    preDeployCommand: npx --no-install prisma migrate deploy --schema apps/preference-service/prisma/schema.prisma
+    envVars:
+      - fromGroup: backend-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: preferences-db
+          property: connectionString
+
+  # ---------------------------------------------------------------------------
+  # fanout-service — WebSocket captions. No database.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: fanout-service
+    runtime: docker
+    dockerfilePath: ./apps/fanout-service/Dockerfile
+    dockerContext: .
+    plan: 0.5c-512mb
+    healthCheckPath: /healthz
+    envVars:
+      - fromGroup: backend-shared
+      - key: REDIS_URL
+        fromService:
+          name: inclusaai-redis
+          type: keyvalue
+          property: connectionString
+      - key: FANOUT_STREAM_MAXLEN
+        value: "100000"
+
+  # ---------------------------------------------------------------------------
+  # Key Value (Redis) — fanout only: participant state plus the socket.io
+  # streams adapter that makes several instances behave as one and enables
+  # reconnection.
+  # ---------------------------------------------------------------------------
+  - type: keyvalue
+    name: inclusaai-redis
+    plan: 256mb
+    maxmemoryPolicy: noeviction
+    ipAllowList: [] # internal (private-network) connections only
+
+databases:
+  # Per ADR-0003 each service owns its own database. Separate instances rather
+  # than three logical databases on one instance, because a Blueprint cannot
+  # create additional logical databases on a Render Postgres — and because a
+  # shared instance would let one service's migration touch another's tables.
+  # Drop to `plan: free` while evaluating; free instances are deleted after
+  # 30 days of inactivity, so they are not a staging setup.
+  - name: identity-db
+    plan: 0.1c-256mb
+    postgresMajorVersion: "16"
+    databaseName: synapgrid-identity
+
+  - name: sessions-db
+    plan: 0.1c-256mb
+    postgresMajorVersion: "16"
+    databaseName: synapgrid-sessions
+
+  - name: preferences-db
+    plan: 0.1c-256mb
+    postgresMajorVersion: "16"
+    databaseName: synapgrid-preferences
+
+envVarGroups:
+  - name: backend-shared
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # --- Kafka -------------------------------------------------------------
+      # Same broker as ai-services (Aiven), so one event bus serves both repos.
+      # The variable names are the ones ai-services already uses.
+      - key: KAFKA_BOOTSTRAP_SERVERS
+        value: kafka-9780174-imkargi-90f4.l.aivencloud.com:27345
+      - key: KAFKA_SECURITY_PROTOCOL
+        value: SASL_SSL
+      - key: KAFKA_SASL_MECHANISM
+        value: plain
+      - key: KAFKA_USERNAME
+        value: avnadmin
+      - key: KAFKA_PASSWORD
+        sync: false
+      # Aiven signs with a private CA that is not in the system trust store. The
+      # Dockerfiles copy certs/ into the image, so this is a path, not contents.
+      - key: KAFKA_CA_CERT
+        value: /usr/src/app/certs/aiven-kafka-ca.pem
+
+      # --- Secrets -----------------------------------------------------------
+      # Generated once for the group, so every service that reads it gets the
+      # same value — which is the requirement: JWT_SECRET must be identical
+      # wherever account tokens are verified, and PARTICIPANT_TOKEN_SECRET
+      # identical in session/preference/fanout. Generate your own and set them
+      # with `sync: false` instead if you need to control the values.
+      # PARTICIPANT_TOKEN_SECRET is deliberately a different secret from
+      # JWT_SECRET: that separation is what stops a participant token acting as
+      # an account token and vice versa.
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PARTICIPANT_TOKEN_SECRET
+        generateValue: true
+
+      # --- Browser access ----------------------------------------------------
+      # Comma-separated frontend origins. Without the real domains browsers are
+      # blocked even though curl works.
+      - key: CORS_ORIGINS
+        sync: false

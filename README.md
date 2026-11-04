@@ -123,11 +123,25 @@ pnpm --filter preference-service db:deploy
 ```
 
 A service exits at startup rather than running half-configured if something
-required is missing: `KAFKA_BROKER` for all four, plus
-`PARTICIPANT_TOKEN_SECRET` for session-service and fanout-service. Remember
-`JWT_SECRET` must be identical across services, and
-`PARTICIPANT_TOKEN_SECRET` identical in session-service and fanout-service but
-different from `JWT_SECRET`.
+required is missing: `KAFKA_BOOTSTRAP_SERVERS` for all four, plus
+`PARTICIPANT_TOKEN_SECRET` for session-service, preference-service and
+fanout-service. Remember `JWT_SECRET` must be identical in identity-service and
+session-service, and `PARTICIPANT_TOKEN_SECRET` identical in
+session-service/preference-service/fanout-service but different from
+`JWT_SECRET` (identity issues account tokens, session issues participant tokens).
+
+**Which Kafka.** Two brokers are in use, and a `.env` picks one:
+
+- The shared **Aiven** instance, which ai-services and realtime-media-backend
+  also use. Cross-repo events only work on it, so it is the right choice once
+  you are testing the platform end to end. It needs `KAFKA_SECURITY_PROTOCOL=SASL_SSL`,
+  `KAFKA_USERNAME`, `KAFKA_PASSWORD` and `KAFKA_CA_CERT` (the committed
+  `certs/aiven-kafka-ca.pem`, by absolute path locally, or the in-image path in
+  Docker).
+- The local **Redpanda** from `docker-compose.dev.yml`
+  (`localhost:29092`, `KAFKA_SECURITY_PROTOCOL=PLAINTEXT`, nothing else).
+  Enough to run this repo on its own, and the default in the `.env.example`
+  files; `ai-services` events will not appear on it.
 
 ### Deploying
 
@@ -135,6 +149,10 @@ Each service deploys separately and gets its own domain; there is no single
 entry point and no API gateway. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 for the Railway setup, the environment-variable matrix, and why
 `https://<domain>/api/docs` only ever shows one service's endpoints.
+
+The Render Blueprint is [render.yaml](render.yaml); the prerequisites (shared
+Aiven Kafka, secrets, topics, verification) are in
+[docs/RENDER.md](docs/RENDER.md).
 
 ### Running the Infrastructure
 

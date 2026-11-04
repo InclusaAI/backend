@@ -1,7 +1,9 @@
 # Deployment
 
 How this repo is meant to be hosted, written against Railway because that is
-where it runs today. The shape applies to any host.
+where it runs today. The shape applies to any host; for Render, where the same
+four services are provisioned from `render.yaml`, see
+[RENDER.md](RENDER.md).
 
 ## There is no single entry point
 
@@ -95,10 +97,12 @@ name, look for the equivalent in the service's settings.
 ### Or build from a Dockerfile
 
 `apps/fanout-service/Dockerfile` works and is the template for the rest. What
-makes it work, and what the other four still lack:
+makes it work, and what the other four now do too:
 
-- `corepack enable` — `node:18-alpine` ships no pnpm, so the original
-  `RUN pnpm install` failed immediately.
+- `corepack enable` plus a pinned `corepack prepare pnpm@8.6.0 --activate` — the
+  alpine Node image ships no pnpm, so the original `RUN pnpm install` failed
+  immediately, and `pnpm@latest` would rewrite the lockfile format that
+  `--frozen-lockfile` is checking.
 - Copying the workspace manifests (root `package.json`, the lockfile,
   `pnpm-workspace.yaml`, and every `libs/*/package.json`) **before** installing,
   so a code change does not invalidate the dependency layer.
@@ -107,12 +111,14 @@ makes it work, and what the other four still lack:
   `db:generate`, so `prisma generate` runs for the services that have a schema.
 - Copying `apps/<service>` wholesale into the production stage, which carries
   the generated Prisma client in `generated/`, then `WORKDIR` into it so
-  `node dist/main.js` resolves.
+  `node dist/main.js` resolves. If `pnpm-lock.yaml` is behind `package.json`,
+  `--frozen-lockfile` fails first — regenerate the lockfile, do not drop the
+  flag.
 
-The other four Dockerfiles are still the original broken pattern: pnpm on
-`node:18-alpine` with no `corepack`. Until they get the same treatment, deploy
-those three services with the build and start commands above, which use
-Railway's own builder and need no Dockerfile.
+The other four Dockerfiles follow this pattern as well; they were the original
+broken one (pnpm on `node:18-alpine` with no `corepack`, and a `dist/` path that
+nested builds do not emit) until the Render work in
+[RENDER.md](RENDER.md) replaced them.
 
 ## Data stores
 
@@ -225,7 +231,8 @@ For fanout, connect a socket with the `participantToken` that
 
 Tracked in [DEVELOPMENT-STATUS.md](DEVELOPMENT-STATUS.md):
 
-- The Dockerfiles do not build. Use Nixpacks, or fix them.
+- The Dockerfiles build from the repo root with the pinned pnpm; see
+  [RENDER.md](RENDER.md) for why each line is there.
 - CI points at the wrong GitHub organisation and provisions no Postgres or
   Kafka, so nothing is tested before deploy.
 - `/healthz` returns a static string. It does not check Postgres, Kafka or

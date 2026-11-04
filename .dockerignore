@@ -1,0 +1,26 @@
+# Everything each service image needs is copied explicitly, so keep the context
+# to source and manifests. Without this, a local install is uploaded on every
+# build and can shadow the one inside the image with host-specific symlinks.
+node_modules
+**/node_modules
+
+# Build output and generated clients are produced inside the image.
+**/dist
+**/generated
+**/.turbo
+coverage
+
+# Local configuration and secrets never belong in an image.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Repository metadata and docs.
+.git
+.github
+docs
+*.md
+!README.md
+
+# Tests are not needed to run the services.
+**/test
