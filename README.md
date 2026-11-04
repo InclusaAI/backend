@@ -54,7 +54,8 @@ overwrite the last.
     ```
 3.  Start the infrastructure (see below), then configure and migrate each service:
     ```bash
-    cp apps/<service>/.env.example apps/<service>/.env   # then set JWT_SECRET
+    cp .env.example .env                                # general env: secrets, Kafka
+    cp apps/<service>/.env.example apps/<service>/.env  # then set DATABASE_URL
     pnpm db:generate
     pnpm --filter identity-service   db:migrate
     pnpm --filter session-service    db:migrate
@@ -62,7 +63,8 @@ overwrite the last.
     ```
 
     `JWT_SECRET` must be **identical** across every service that verifies tokens;
-    only `identity-service` issues them. Generate one with
+    only `identity-service` issues them. It lives once, in the repo-root general
+    env, together with the other cross-service values. Generate one with
     `openssl rand -base64 48`.
 
     **Postgres is published on host port 5440**, not 5432 — native Postgres
@@ -107,10 +109,14 @@ pnpm --filter fanout-service dev
 Check one is up with `curl http://localhost:3001/healthz`, and browse its API at
 `http://localhost:3001/api/docs`.
 
-**First run, or after pulling:** each service reads its own `.env`, so copy the
-examples and fill them in, then apply migrations.
+**First run, or after pulling:** values shared by every service (Kafka
+connection, the two token secrets, CORS origins) live once in the general env
+at the repo root; each service also reads its own `apps/<service>/.env` for
+service-specific values (database URL, port), which takes precedence. Copy the
+examples, fill them in, then apply migrations.
 
 ```bash
+cp .env.example .env                                    # general: secrets, Kafka, CORS
 cp apps/identity-service/.env.example   apps/identity-service/.env
 cp apps/session-service/.env.example    apps/session-service/.env
 cp apps/preference-service/.env.example apps/preference-service/.env
@@ -125,12 +131,13 @@ pnpm --filter preference-service db:deploy
 A service exits at startup rather than running half-configured if something
 required is missing: `KAFKA_BOOTSTRAP_SERVERS` for all four, plus
 `PARTICIPANT_TOKEN_SECRET` for session-service, preference-service and
-fanout-service. Remember `JWT_SECRET` must be identical in identity-service and
-session-service, and `PARTICIPANT_TOKEN_SECRET` identical in
+fanout-service. Keeping them in the general env is what makes the required
+equality trivially true: `JWT_SECRET` identical wherever account tokens are
+verified, `PARTICIPANT_TOKEN_SECRET` identical across
 session-service/preference-service/fanout-service but different from
 `JWT_SECRET` (identity issues account tokens, session issues participant tokens).
 
-**Which Kafka.** Two brokers are in use, and a `.env` picks one:
+**Which Kafka.** Two brokers are in use, and the general `.env` picks one:
 
 - The shared **Aiven** instance, which ai-services and realtime-media-backend
   also use. Cross-repo events only work on it, so it is the right choice once
@@ -142,6 +149,9 @@ session-service/preference-service/fanout-service but different from
   (`localhost:29092`, `KAFKA_SECURITY_PROTOCOL=PLAINTEXT`, nothing else).
   Enough to run this repo on its own, and the default in the `.env.example`
   files; `ai-services` events will not appear on it.
+
+  On Render the same shared values come from the `backend-shared` env var
+  group in `render.yaml` instead.
 
 ### Deploying
 

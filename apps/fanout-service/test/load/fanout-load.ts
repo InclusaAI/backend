@@ -15,6 +15,9 @@ import * as path from "path";
 import * as dotenv from "dotenv";
 
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
+// Repo-root general env: PARTICIPANT_TOKEN_SECRET and Kafka. dotenv does not
+// overwrite what the app .env already set.
+dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 
 import { NestFactory } from "@nestjs/core";
 import { Logger, LogLevel } from "@nestjs/common";

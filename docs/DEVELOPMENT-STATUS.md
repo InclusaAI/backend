@@ -148,7 +148,8 @@ Revisit if frontend integration proves painful.
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d       # postgres, redis, kafka
-cp apps/<service>/.env.example apps/<service>/.env   # then fill in JWT_SECRET
+cp .env.example .env                                 # general env: secrets, Kafka
+cp apps/<service>/.env.example apps/<service>/.env   # then set DATABASE_URL
 pnpm install
 pnpm db:generate
 pnpm --filter identity-service db:migrate            # repeat per service

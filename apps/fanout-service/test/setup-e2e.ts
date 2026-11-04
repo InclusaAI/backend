@@ -1,6 +1,10 @@
-// Loads the service's .env so e2e specs see PARTICIPANT_TOKEN_SECRET,
-// KAFKA_BROKER and REDIS_URL. Jest does not read .env files on its own.
+// Loads the service's .env, then the repo-root general .env (REDIS_URL comes
+// from the app file; PARTICIPANT_TOKEN_SECRET and KAFKA_BROKER from the root
+// one). dotenv never overwrites a variable the first file already set, so the
+// app .env wins — matching the ConfigModule's envFilePath order. Jest does not
+// read .env files on its own.
 import * as dotenv from "dotenv";
 import * as path from "path";
 
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
+dotenv.config({ path: path.resolve(__dirname, "../../.env") });

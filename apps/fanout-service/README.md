@@ -93,8 +93,10 @@ connections for that session.
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d   # Kafka and Redis
+cp .env.example .env                             # general env, if not done yet
 cp apps/fanout-service/.env.example apps/fanout-service/.env
-# PARTICIPANT_TOKEN_SECRET must match session-service's
+# PARTICIPANT_TOKEN_SECRET comes from the general env, so it already matches
+# session-service's
 pnpm --filter fanout-service start:dev
 ```
 
