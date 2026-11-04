@@ -42,14 +42,18 @@ export class FanoutEventsController {
 
     // ai-services names a speaker by participant id; the display name lives in
     // session-service and reached us on session.participant.updated. Only look
-    // it up when there is a speaker to name.
-    const speaker = segment.speaker_participant_id
-      ? await this.state.get(segment.speaker_participant_id)
-      : null;
+    // it up when there is a speaker to name. asr-service sends `speaker_id`;
+    // `speaker_participant_id` is what this repo's proposal called it, so both
+    // are accepted rather than one silently dropping speaker names.
+    const speakerId =
+      segment.speaker_participant_id ?? segment.speaker_id ?? undefined;
+    const speaker = speakerId ? await this.state.get(speakerId) : null;
 
     this.gateway.broadcastSegment(segment.session_id, {
       segmentId: segment.segment_id,
-      sequence: segment.sequence,
+      ...(typeof segment.sequence === "number"
+        ? { sequence: segment.sequence }
+        : {}),
       text: segment.text,
       isFinal: segment.is_final,
       language: segment.language,

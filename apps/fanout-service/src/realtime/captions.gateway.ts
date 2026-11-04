@@ -19,7 +19,8 @@ export const CAPTION_SEGMENT_EVENT = "transcript.segment";
  */
 export interface CaptionSegmentMessage {
   segmentId: string;
-  sequence: number;
+  /** Absent when asr-service omitted it; order by `startMs` then. */
+  sequence?: number;
   text: string;
   isFinal: boolean;
   language?: string;
